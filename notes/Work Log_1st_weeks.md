@@ -154,6 +154,8 @@ IntelliJ의 JDK만으로도 IDE 안에서 실행·빌드는 된다. 그래도 PC
 - `application.yaml`의 `.env` 경로를 `../.env` → `.env`로, compose는 `build: .`, CI의 `working-directory` 제거
 - compose에 `name: my-recipe-v1`을 넣어 폴더를 옮겨도 컨테이너·볼륨 이름이 그대로 유지되게 함
 - 바깥 `my-recipe-v1`의 남은 파일(.idea, 빈 폴더, 옛 .gitignore) 삭제
+- `.claude/settings.json`에 `Read(./.env)` 금지 규칙 추가 (Claude Code가 `.env`를 못 읽게 강제)
+- 첫 커밋 "기본 세팅" push. GitHub 저장소 이름 `myrecipe` → `myrecipe-backend`, `settings.gradle`의 프로젝트 이름도 `myrecipe-backend`로 변경
 
 ## 다음 할 일
 
