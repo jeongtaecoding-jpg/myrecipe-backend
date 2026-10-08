@@ -5,7 +5,7 @@
 
 ## 현재 위치
 
-- **0단계(개발 환경 준비) 마무리 중**
+- **0단계 완료 (2026-10-08)** → 다음은 1단계(공통 기반 + 회원가입/로그인)
 - 끝난 것: 기획·설계 문서, 프로젝트 생성, 의존성, `.env`, JDK 21 설치, Docker(MySQL·Redis), 테스트 통과, bootRun 성공
 - 남은 것: Git·GitHub·CI → ROADMAP 체크
 
@@ -164,8 +164,8 @@ IntelliJ의 JDK만으로도 IDE 안에서 실행·빌드는 된다. 그래도 PC
 - [x] `.\gradlew.bat bootRun` → `Started MyrecipeApplication` 확인
 - [x] `.\gradlew.bat test` → `BUILD SUCCESSFUL`
 - [x] `ci.yml`을 `.github/workflows/`로 이동
-- [ ] GitHub 저장소 생성, Secret scanning·Push protection 켜기, push, Actions 초록불
-- [ ] `ROADMAP.md` 0단계 체크, 기록 표 작성
+- [x] GitHub 저장소 생성, Secret scanning·Push protection 켜기, push, Actions 초록불
+- [x] `ROADMAP.md` 0단계 체크, 기록 표 작성
 - [x] 빈 `docker/storage` 폴더 삭제
 
 ### 1단계 (공통 기반 + 회원가입/로그인)

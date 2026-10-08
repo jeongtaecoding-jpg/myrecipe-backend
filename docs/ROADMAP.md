@@ -7,12 +7,12 @@
 
 ## 0단계. 시작 준비
 
-- [ ] Spring Initializr로 `myrecipe_backend/` 프로젝트 생성 (설정은 아래)
-- [ ] `myrecipe_backend/src/main/resources/application.yaml` 내용을 환경 변수를 읽는 설정으로 교체
-- [ ] `myrecipe_backend`에서 `.env.example`을 복사해 `.env` 만들고 비밀번호 바꾸기
-- [ ] `myrecipe_backend`에서 `docker compose up -d` → `docker compose ps -a`로 mysql(healthy)·redis 실행 확인
-- [ ] `myrecipe_backend`에서 `./gradlew bootRun` → 오류 없이 8080에서 실행
-- [ ] `myrecipe_backend`를 Git 저장소로 만들고 GitHub에 올리기 (`.env`가 올라가지 않았는지 확인) → GitHub Actions 초록불
+- [x] Spring Initializr로 `myrecipe_backend/` 프로젝트 생성 (설정은 아래)
+- [x] `myrecipe_backend/src/main/resources/application.yaml` 내용을 환경 변수를 읽는 설정으로 교체
+- [x] `myrecipe_backend`에서 `.env.example`을 복사해 `.env` 만들고 비밀번호 바꾸기
+- [x] `myrecipe_backend`에서 `docker compose up -d` → `docker compose ps -a`로 mysql(healthy)·redis 실행 확인
+- [x] `myrecipe_backend`에서 `./gradlew bootRun` → 오류 없이 8080에서 실행
+- [x] `myrecipe_backend`를 Git 저장소로 만들고 GitHub에 올리기 (`.env`가 올라가지 않았는지 확인) → GitHub Actions 초록불
 
 Spring Initializr(https://start.spring.io) 설정:
 
@@ -87,4 +87,4 @@ Spring Initializr(https://start.spring.io) 설정:
 
 | 날짜 | 단계 | 어려웠던 점 / 새로 이해한 것 |
 |---|---|---|
-| | | |
+| 2026-10-08 | 0단계 | MinIO 배포 중단 → 사진 저장소를 AWS S3로 변경. PC MySQL(3306)·로컬 Kubernetes(8080) 포트 충돌을 원인 추적으로 해결. 오픈소스는 "누가 관리하는가"도 본다 |
