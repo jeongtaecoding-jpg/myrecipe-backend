@@ -1,0 +1,62 @@
+# 레시피 사이트 로컬 실행 환경 (myrecipe_backend 폴더에서 실행)
+#   개발 모드:          docker compose up -d            (MySQL, Redis만. 사진은 AWS S3)
+#   전체 컨테이너 모드: docker compose --profile app up -d --build   (+ Spring Boot, 6단계부터)
+# 비밀 값은 같은 폴더의 .env 파일에서 읽는다 (.env.example 참고, .env는 Git에 올리지 않음)
+
+# 프로젝트 이름을 고정해 컨테이너·볼륨 이름(my-recipe-v1-...)이 폴더 위치와 상관없이 같게 한다
+name: my-recipe-v1
+
+services:
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: myrecipe
+      MYSQL_USER: ${DB_USERNAME}
+      MYSQL_PASSWORD: ${DB_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+      TZ: Asia/Seoul
+    ports:
+      - "127.0.0.1:3307:3306"          # 내 컴퓨터에서만 접속. PC에 설치된 MySQL(3306)과 겹치지 않게 3307 사용
+    volumes:
+      - mysql-data:/var/lib/mysql       # 컨테이너를 지워도 데이터 유지
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 5s
+      retries: 20
+
+  redis:
+    image: redis:7.4
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD}"]
+    ports:
+      - "127.0.0.1:6379:6379"          # 외부 공개 금지
+
+  app:                                  # Spring Boot (6단계에서 myrecipe_backend/Dockerfile을 만든 뒤 사용)
+    build: .                            # 이 폴더의 Dockerfile (6단계)
+    profiles: ["app"]
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    environment:
+      DB_URL: jdbc:mysql://mysql:3306/myrecipe?serverTimezone=Asia/Seoul&characterEncoding=UTF-8
+      DB_USERNAME: ${DB_USERNAME}
+      DB_PASSWORD: ${DB_PASSWORD}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      STORAGE_REGION: ${STORAGE_REGION}            # 사진 저장소: AWS S3 (서울 리전)
+      STORAGE_BUCKET: ${STORAGE_BUCKET}
+      STORAGE_PUBLIC_URL: ${STORAGE_PUBLIC_URL}    # CloudFront 주소
+      STORAGE_ACCESS_KEY: ${STORAGE_ACCESS_KEY}
+      STORAGE_SECRET_KEY: ${STORAGE_SECRET_KEY}
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_ACCESS_EXPIRATION_SECONDS: ${JWT_ACCESS_EXPIRATION_SECONDS}
+      JWT_REFRESH_EXPIRATION_SECONDS: ${JWT_REFRESH_EXPIRATION_SECONDS}
+      COOKIE_SECURE: "false"
+      TZ: Asia/Seoul                              # 컨테이너 기본 UTC → 개발 모드와 시간 맞추기
+    ports:
+      - "127.0.0.1:8080:8080"
+
+volumes:
+  mysql-data:

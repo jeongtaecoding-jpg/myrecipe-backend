@@ -1,0 +1,32 @@
+# 환경 변수를 읽는 설정. 비밀 값은 여기에 쓰지 않는다.
+# 값은 모두 환경 변수에서 읽는다. 로컬에서는 myrecipe_backend 폴더의 .env를 자동으로 읽는다.
+
+spring:
+  application:
+    name: myrecipe
+  config:
+    # bootRun·테스트·IntelliJ 실행은 모두 myrecipe_backend 폴더에서 실행되므로 같은 폴더의 .env를 읽는다
+    import: optional:file:.env[.properties]
+
+  datasource:
+    url: ${DB_URL}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+
+  jpa:
+    hibernate:
+      ddl-auto: update        # 학습 초기 편의용. 테이블을 엔티티에 맞춰 자동 생성·변경 (운영에서는 쓰지 않음)
+    open-in-view: false        # 트랜잭션 밖에서 지연 로딩하지 않도록 (N+1·LazyInitializationException을 직접 겪고 해결해 보기)
+    properties:
+      hibernate:
+        format_sql: true
+
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD}
+
+logging:
+  level:
+    org.hibernate.SQL: debug   # 실행되는 SQL을 보면서 N+1을 확인

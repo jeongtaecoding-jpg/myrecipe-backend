@@ -1,0 +1,913 @@
+openapi: 3.0.3
+info:
+  title: 레시피 사이트 API (MVP)
+  version: 0.1.0
+  description: |
+    회원가입/로그인, 레시피 등록·수정·삭제, 좋아요·댓글, 재료 검색 API.
+    기준 문서는 API_SPEC.md이며, 이 파일은 그 내용을 OpenAPI 형식으로 옮긴 설계 문서다(구현 전).
+
+    - 인증: 로그인으로 받은 accessToken(30분)을 `Authorization: Bearer {토큰}` 헤더로 보낸다.
+    - 사진은 Presigned URL로 S3에 직접 올리고, CloudFront URL로 보여준다.
+    - Refresh Token(14일)은 httpOnly 쿠키 `refresh_token`으로 받고, `/api/auth/refresh`로 Access Token을 재발급한다. 서버는 Refresh Token을 Redis에 저장한다.
+    - 인증이 "선택"인 API는 토큰 없이 호출할 수 있고, 토큰이 있으면 내 정보(likedByMe 등)가 반영된다.
+    - 토큰을 보냈는데 만료·위조면 인증 선택 API여도 401을 반환한다.
+servers:
+  - url: http://localhost:8080
+    description: 로컬 개발 서버
+tags:
+  - name: 회원
+  - name: 이미지
+  - name: 레시피
+  - name: 좋아요
+  - name: 댓글
+
+paths:
+  /api/members/signup:
+    post:
+      tags: [회원]
+      summary: 회원가입
+      operationId: signup
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SignupRequest'
+      responses:
+        '201':
+          description: 가입 성공
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MemberResponse'
+        '400':
+          $ref: '#/components/responses/InvalidInput'
+        '409':
+          description: EMAIL_DUPLICATED, NICKNAME_DUPLICATED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/auth/login:
+    post:
+      tags: [회원]
+      summary: 로그인
+      description: |
+        이메일이 없는 경우와 비밀번호가 틀린 경우를 구분하지 않고 LOGIN_FAILED로 응답한다.
+        같은 이메일로 5번 실패하면 15분 동안 LOGIN_TOO_MANY_ATTEMPTS(429)로 막는다.
+      operationId: login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: 로그인 성공. Refresh Token은 응답 쿠키로 전달된다.
+          headers:
+            Set-Cookie:
+              $ref: '#/components/headers/RefreshTokenCookie'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '400':
+          $ref: '#/components/responses/InvalidInput'
+        '401':
+          description: LOGIN_FAILED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          description: LOGIN_TOO_MANY_ATTEMPTS
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/auth/refresh:
+    post:
+      tags: [회원]
+      summary: Access Token 재발급
+      description: |
+        요청 본문 없음. 브라우저가 refresh_token 쿠키를 자동으로 보낸다.
+        Redis에 저장된 해시와 비교해 일치하면 새 Access Token과 새 Refresh Token을 발급하고 Redis 값을 교체한다(로테이션).
+        이미 교체된 예전 토큰이 오면(재사용) Redis 키를 지우고 401로 응답한다.
+      operationId: refreshToken
+      security:
+        - refreshCookie: []
+      responses:
+        '200':
+          description: 재발급 성공
+          headers:
+            Set-Cookie:
+              $ref: '#/components/headers/RefreshTokenCookie'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '401':
+          description: REFRESH_TOKEN_INVALID (쿠키 없음, 만료·위조, Redis에 없음, 저장값 불일치). 쿠키 삭제 Set-Cookie를 함께 보낸다.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/auth/logout:
+    post:
+      tags: [회원]
+      summary: 로그아웃
+      description: Redis의 Refresh Token을 지우고 쿠키를 삭제한다. 쿠키가 없거나 이미 로그아웃된 상태여도 204.
+      operationId: logout
+      security:
+        - {}
+        - refreshCookie: []
+      responses:
+        '204':
+          description: 로그아웃 완료
+          headers:
+            Set-Cookie:
+              description: 'refresh_token=; Path=/api/auth; Max-Age=0'
+              schema:
+                type: string
+
+  /api/members/me:
+    get:
+      tags: [회원]
+      summary: 내 정보
+      operationId: getMe
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: 조회 성공
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MemberResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/images/presigned-url:
+    post:
+      tags: [이미지]
+      summary: 사진 업로드용 Presigned URL 발급
+      description: |
+        서버는 파일을 받지 않는다. 받은 uploadUrl로 브라우저가 S3에 직접 PUT 한다(Content-Type은 요청한 contentType과 같아야 함, JWT 헤더 없음).
+        업로드 후 objectKey를 레시피 등록·수정 요청의 thumbnailKey, steps[].imageKey에 넣는다.
+        uploadUrl은 5분 동안 유효하다. Presigned PUT은 크기를 막지 못하므로 레시피 저장 때 서버가 실제 크기를 다시 확인한다.
+      operationId: createPresignedUploadUrl
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PresignedUrlRequest'
+      responses:
+        '200':
+          description: 발급 성공
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PresignedUrlResponse'
+        '400':
+          description: INVALID_INPUT, IMAGE_INVALID_TYPE, IMAGE_TOO_LARGE
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/recipes:
+    post:
+      tags: [레시피]
+      summary: 레시피 등록
+      operationId: createRecipe
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecipeRequest'
+      responses:
+        '201':
+          description: 등록 성공
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecipeDetailResponse'
+        '400':
+          description: INVALID_INPUT, INGREDIENT_DUPLICATED, IMAGE_NOT_FOUND, IMAGE_INVALID_TYPE, IMAGE_TOO_LARGE
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    get:
+      tags: [레시피]
+      summary: 레시피 목록·재료 검색
+      description: 최신 등록순. ingredient를 주면 그 이름과 정확히 일치하는 재료가 들어간 레시피만 조회한다. 일치하는 재료가 없으면 빈 목록.
+      operationId: getRecipes
+      security:
+        - {}
+        - bearerAuth: []
+      parameters:
+        - name: ingredient
+          in: query
+          required: false
+          description: 재료 이름 (예 두부)
+          schema:
+            type: string
+            maxLength: 50
+          example: 두부
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Size'
+      responses:
+        '200':
+          description: 조회 성공
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecipePage'
+        '401':
+          $ref: '#/components/responses/TokenError'
+
+  /api/recipes/{recipeId}:
+    parameters:
+      - $ref: '#/components/parameters/RecipeId'
+    get:
+      tags: [레시피]
+      summary: 레시피 상세
+      operationId: getRecipe
+      security:
+        - {}
+        - bearerAuth: []
+      responses:
+        '200':
+          description: 조회 성공
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecipeDetailResponse'
+        '401':
+          $ref: '#/components/responses/TokenError'
+        '404':
+          $ref: '#/components/responses/RecipeNotFound'
+    put:
+      tags: [레시피]
+      summary: 레시피 수정 (작성자만)
+      description: 재료 목록과 조리 순서는 보낸 목록으로 통째로 교체한다.
+      operationId: updateRecipe
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecipeRequest'
+      responses:
+        '200':
+          description: 수정 성공
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecipeDetailResponse'
+        '400':
+          description: INVALID_INPUT, INGREDIENT_DUPLICATED, IMAGE_NOT_FOUND, IMAGE_INVALID_TYPE, IMAGE_TOO_LARGE
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: RECIPE_FORBIDDEN
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          $ref: '#/components/responses/RecipeNotFound'
+    delete:
+      tags: [레시피]
+      summary: 레시피 삭제 (작성자만)
+      description: 댓글, 좋아요, 재료 연결, 조리 순서를 함께 지운다. 재료 자체는 지우지 않는다.
+      operationId: deleteRecipe
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: 삭제 성공
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: RECIPE_FORBIDDEN
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          $ref: '#/components/responses/RecipeNotFound'
+
+  /api/recipes/{recipeId}/likes:
+    parameters:
+      - $ref: '#/components/parameters/RecipeId'
+    post:
+      tags: [좋아요]
+      summary: 좋아요
+      operationId: likeRecipe
+      security:
+        - bearerAuth: []
+      responses:
+        '201':
+          description: 좋아요 성공
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LikeResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/RecipeNotFound'
+        '409':
+          description: LIKE_ALREADY_EXISTS
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      tags: [좋아요]
+      summary: 좋아요 취소
+      operationId: unlikeRecipe
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: 취소 성공
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: RECIPE_NOT_FOUND, LIKE_NOT_FOUND
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/recipes/{recipeId}/comments:
+    parameters:
+      - $ref: '#/components/parameters/RecipeId'
+    get:
+      tags: [댓글]
+      summary: 댓글 목록 (오래된순)
+      operationId: getComments
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Size'
+      responses:
+        '200':
+          description: 조회 성공
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommentPage'
+        '404':
+          $ref: '#/components/responses/RecipeNotFound'
+    post:
+      tags: [댓글]
+      summary: 댓글 작성
+      operationId: createComment
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CommentCreateRequest'
+      responses:
+        '201':
+          description: 작성 성공
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommentResponse'
+        '400':
+          $ref: '#/components/responses/InvalidInput'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/RecipeNotFound'
+
+  /api/comments/{commentId}:
+    delete:
+      tags: [댓글]
+      summary: 댓글 삭제 (작성자만)
+      operationId: deleteComment
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: commentId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '204':
+          description: 삭제 성공
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: COMMENT_FORBIDDEN
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: COMMENT_NOT_FOUND
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    refreshCookie:
+      type: apiKey
+      in: cookie
+      name: refresh_token
+
+  headers:
+    RefreshTokenCookie:
+      description: 'refresh_token={Refresh Token}; HttpOnly; SameSite=Strict; Path=/api/auth; Max-Age=1209600 (배포 시 Secure 추가)'
+      schema:
+        type: string
+
+  parameters:
+    RecipeId:
+      name: recipeId
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+    Page:
+      name: page
+      in: query
+      required: false
+      description: 페이지 번호 (0부터)
+      schema:
+        type: integer
+        minimum: 0
+        default: 0
+    Size:
+      name: size
+      in: query
+      required: false
+      description: 페이지 크기
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 50
+        default: 20
+
+  responses:
+    InvalidInput:
+      description: INVALID_INPUT (fieldErrors 포함)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            status: 400
+            code: INVALID_INPUT
+            message: 입력값이 올바르지 않습니다.
+            fieldErrors:
+              - field: title
+                message: 제목은 1~100자로 입력해 주세요.
+    Unauthorized:
+      description: UNAUTHORIZED, TOKEN_INVALID, TOKEN_EXPIRED
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            status: 401
+            code: UNAUTHORIZED
+            message: 로그인이 필요합니다.
+            fieldErrors: []
+    TokenError:
+      description: 토큰을 보냈는데 만료·위조된 경우 (TOKEN_INVALID, TOKEN_EXPIRED)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    RecipeNotFound:
+      description: RECIPE_NOT_FOUND
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            status: 404
+            code: RECIPE_NOT_FOUND
+            message: 레시피를 찾을 수 없습니다.
+            fieldErrors: []
+
+  schemas:
+    ErrorResponse:
+      type: object
+      required: [status, code, message]
+      properties:
+        status:
+          type: integer
+          example: 400
+        code:
+          type: string
+          enum:
+            - INVALID_INPUT
+            - UNAUTHORIZED
+            - TOKEN_INVALID
+            - TOKEN_EXPIRED
+            - LOGIN_FAILED
+            - LOGIN_TOO_MANY_ATTEMPTS
+            - REFRESH_TOKEN_INVALID
+            - EMAIL_DUPLICATED
+            - NICKNAME_DUPLICATED
+            - IMAGE_INVALID_TYPE
+            - IMAGE_TOO_LARGE
+            - IMAGE_NOT_FOUND
+            - INGREDIENT_DUPLICATED
+            - RECIPE_NOT_FOUND
+            - RECIPE_FORBIDDEN
+            - LIKE_ALREADY_EXISTS
+            - LIKE_NOT_FOUND
+            - COMMENT_NOT_FOUND
+            - COMMENT_FORBIDDEN
+            - INTERNAL_ERROR
+        message:
+          type: string
+        fieldErrors:
+          type: array
+          description: 입력값 검증 실패(400)일 때만 값이 있다
+          items:
+            $ref: '#/components/schemas/FieldError'
+    FieldError:
+      type: object
+      properties:
+        field:
+          type: string
+          example: title
+        message:
+          type: string
+          example: 제목은 1~100자로 입력해 주세요.
+
+    SignupRequest:
+      type: object
+      required: [email, password, nickname]
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 100
+          example: cook@example.com
+        password:
+          type: string
+          minLength: 8
+          maxLength: 20
+          example: password123
+        nickname:
+          type: string
+          minLength: 2
+          maxLength: 30
+          example: 두부요리사
+    MemberResponse:
+      type: object
+      properties:
+        memberId:
+          type: integer
+          format: int64
+          example: 1
+        email:
+          type: string
+          example: cook@example.com
+        nickname:
+          type: string
+          example: 두부요리사
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+          example: cook@example.com
+        password:
+          type: string
+          example: password123
+    LoginResponse:
+      type: object
+      properties:
+        accessToken:
+          type: string
+          example: eyJhbGciOi...
+        tokenType:
+          type: string
+          example: Bearer
+        expiresIn:
+          type: integer
+          description: Access Token 유효 시간(초)
+          example: 1800
+
+    PresignedUrlRequest:
+      type: object
+      required: [contentType, fileSize]
+      properties:
+        contentType:
+          type: string
+          enum: [image/jpeg, image/png, image/webp]
+          example: image/jpeg
+        fileSize:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 5242880
+          description: 바이트 단위, 5MB 이하
+          example: 834512
+    PresignedUrlResponse:
+      type: object
+      properties:
+        uploadUrl:
+          type: string
+          description: S3에 직접 PUT 할 임시 URL (서명 포함)
+          example: 'https://myrecipe-images-example.s3.ap-northeast-2.amazonaws.com/recipes/1/2026/10/02/3f9c1a2e.jpg?X-Amz-Algorithm=...&X-Amz-Signature=...'
+        objectKey:
+          type: string
+          description: 'recipes/{memberId}/{yyyy}/{MM}/{dd}/{UUID}.{확장자}'
+          example: recipes/1/2026/10/02/3f9c1a2e.jpg
+        imageUrl:
+          type: string
+          description: 업로드 후 미리보기용 공개 URL
+          example: https://d1234example.cloudfront.net/recipes/1/2026/10/02/3f9c1a2e.jpg
+        expiresIn:
+          type: integer
+          description: uploadUrl 유효 시간(초)
+          example: 300
+
+    IngredientRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 50
+          description: 앞뒤 공백을 지운 이름으로 재료를 찾고, 없으면 새로 만든다
+          example: 두부
+        amount:
+          type: string
+          maxLength: 30
+          nullable: true
+          example: 1모
+    StepRequest:
+      type: object
+      required: [content]
+      properties:
+        content:
+          type: string
+          minLength: 1
+          maxLength: 1000
+          example: 두부를 1cm 두께로 썬다.
+        imageKey:
+          type: string
+          nullable: true
+          description: Presigned URL 발급에서 받은 objectKey
+          example: recipes/1/2026/10/02/7ab1c0d4.jpg
+    RecipeRequest:
+      type: object
+      description: 등록과 수정에 같은 형식을 쓴다. 같은 재료 이름이 두 번 들어가면 INGREDIENT_DUPLICATED.
+      required: [title, ingredients, steps]
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 100
+          example: 두부조림
+        description:
+          type: string
+          maxLength: 2000
+          nullable: true
+          example: 밥반찬으로 좋은 간단한 두부조림
+        thumbnailKey:
+          type: string
+          nullable: true
+          description: Presigned URL 발급에서 받은 objectKey. 업로드가 끝난 상태여야 하며, 내 memberId로 시작해야 함
+          example: recipes/1/2026/10/02/3f9c1a2e.jpg
+        ingredients:
+          type: array
+          minItems: 1
+          maxItems: 30
+          items:
+            $ref: '#/components/schemas/IngredientRequest'
+        steps:
+          type: array
+          description: 배열 순서가 조리 순서
+          minItems: 1
+          maxItems: 30
+          items:
+            $ref: '#/components/schemas/StepRequest'
+
+    Writer:
+      type: object
+      properties:
+        memberId:
+          type: integer
+          format: int64
+          example: 1
+        nickname:
+          type: string
+          example: 두부요리사
+    IngredientResponse:
+      type: object
+      properties:
+        name:
+          type: string
+          example: 두부
+        amount:
+          type: string
+          nullable: true
+          example: 1모
+    StepResponse:
+      type: object
+      properties:
+        order:
+          type: integer
+          example: 1
+        content:
+          type: string
+          example: 두부를 1cm 두께로 썬다.
+        imageUrl:
+          type: string
+          nullable: true
+    RecipeDetailResponse:
+      type: object
+      properties:
+        recipeId:
+          type: integer
+          format: int64
+          example: 10
+        title:
+          type: string
+          example: 두부조림
+        description:
+          type: string
+          nullable: true
+        thumbnailUrl:
+          type: string
+          nullable: true
+          description: CloudFront 공개 URL
+          example: https://d1234example.cloudfront.net/recipes/1/2026/10/02/3f9c1a2e.jpg
+        writer:
+          $ref: '#/components/schemas/Writer'
+        ingredients:
+          type: array
+          items:
+            $ref: '#/components/schemas/IngredientResponse'
+        steps:
+          type: array
+          items:
+            $ref: '#/components/schemas/StepResponse'
+        likeCount:
+          type: integer
+          example: 12
+        likedByMe:
+          type: boolean
+          description: 토큰 없이 조회하면 항상 false
+          example: false
+        commentCount:
+          type: integer
+          example: 3
+        createdAt:
+          type: string
+          format: date-time
+          example: '2026-10-02T11:07:00'
+        updatedAt:
+          type: string
+          format: date-time
+          example: '2026-10-02T11:07:00'
+    RecipeSummaryResponse:
+      type: object
+      properties:
+        recipeId:
+          type: integer
+          format: int64
+          example: 10
+        title:
+          type: string
+          example: 두부조림
+        thumbnailUrl:
+          type: string
+          nullable: true
+          description: CloudFront 공개 URL
+          example: https://d1234example.cloudfront.net/recipes/1/2026/10/02/3f9c1a2e.jpg
+        writer:
+          $ref: '#/components/schemas/Writer'
+        likeCount:
+          type: integer
+          example: 12
+        createdAt:
+          type: string
+          format: date-time
+          example: '2026-10-02T11:07:00'
+
+    LikeResponse:
+      type: object
+      properties:
+        recipeId:
+          type: integer
+          format: int64
+          example: 10
+        likeCount:
+          type: integer
+          example: 13
+        likedByMe:
+          type: boolean
+          example: true
+
+    CommentCreateRequest:
+      type: object
+      required: [content]
+      properties:
+        content:
+          type: string
+          minLength: 1
+          maxLength: 500
+          example: 주말에 해봤는데 맛있어요!
+    CommentResponse:
+      type: object
+      properties:
+        commentId:
+          type: integer
+          format: int64
+          example: 5
+        content:
+          type: string
+          example: 주말에 해봤는데 맛있어요!
+        writer:
+          $ref: '#/components/schemas/Writer'
+        createdAt:
+          type: string
+          format: date-time
+          example: '2026-10-02T12:00:00'
+
+    PageInfo:
+      type: object
+      properties:
+        page:
+          type: integer
+          example: 0
+        size:
+          type: integer
+          example: 20
+        totalElements:
+          type: integer
+          format: int64
+          example: 135
+        totalPages:
+          type: integer
+          example: 7
+        hasNext:
+          type: boolean
+          example: true
+    RecipePage:
+      allOf:
+        - type: object
+          properties:
+            content:
+              type: array
+              items:
+                $ref: '#/components/schemas/RecipeSummaryResponse'
+        - $ref: '#/components/schemas/PageInfo'
+    CommentPage:
+      allOf:
+        - type: object
+          properties:
+            content:
+              type: array
+              items:
+                $ref: '#/components/schemas/CommentResponse'
+        - $ref: '#/components/schemas/PageInfo'
