@@ -123,7 +123,7 @@ HELP.md
 - 비밀 값(`.env`)은 이미지에 넣지 않고 실행할 때 환경 변수로 넣는다. **`.env`가 Dockerfile과 같은 폴더에 있으므로 `.dockerignore`의 `.env` 줄을 절대 빼지 않는다.** 빠지면 `COPY`로 비밀 값이 이미지에 들어간다.
 - Dockerfile의 `#` 주석은 줄 맨 앞에서만 주석이다. `USER app  # 설명`처럼 명령 뒤에 쓰면 인자로 읽혀 오류가 난다.
 - 컨테이너의 기본 시간대는 UTC다. docker-compose의 `app`에 `TZ: Asia/Seoul`을 넣어 개발 모드와 `createdAt` 시간이 같게 한다.
-- 베이스 이미지 태그는 구현할 때 확정하고 고정한다.
+- 베이스 이미지는 프로젝트의 Java 21과 같은 버전인 `eclipse-temurin:21`(빌드 `21-jdk`, 실행 `21-jre`)을 쓴다. `java:21`이나 `openjdk:21`은 공식 이미지가 중단·deprecated라서 쓰지 않는다. 태그는 구현할 때 확정하고 고정한다.
 
 ### 프록시로 연결 (CORS 없이)
 
