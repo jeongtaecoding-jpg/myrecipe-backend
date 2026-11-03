@@ -33,12 +33,25 @@ Spring Initializr(https://start.spring.io) 설정:
 
 ## 1단계. 공통 기반 + 회원가입/로그인
 
-- [ ] `global`: BaseTimeEntity, ErrorCode, BusinessException, 전역 예외 처리, 에러 응답 형식
+- [x] `global`: BaseTimeEntity, ErrorCode, BusinessException, 전역 예외 처리, 에러 응답 형식 (`GlobalExceptionHandlerTest` 4개 통과)
 - [ ] 회원가입(BCrypt), 로그인(Access Token만), JWT 필터, `/api/members/me`
+  - [x] `Member` 엔티티, `MemberRepository`(`existsByEmail`, `existsByNickname`, `findByEmail`)
+  - [x] `SignupRequest`, `SignupResponse` (`member/dto`)
+  - [x] `SecurityConfig`: `PasswordEncoder`(BCrypt), stateless, 가입·`/api/auth/**`·`/error` 허용
+  - [x] `MemberService.signup` (중복 확인 → 인코딩 → 저장)
+  - [ ] `MemberController` `POST /api/members/signup` → 201 (**다음 할 일**)
+  - [ ] 회원가입 테스트: 서비스 단위 테스트(성공, 이메일·닉네임 중복), 컨트롤러 테스트(검증 실패 400, 중복 409, 성공 201). `signup`의 INSERT는 아직 테스트로 확인하지 못했다
+  - [ ] 로그인(Access Token 발급), JWT 발급·검증 클래스, JWT 필터, `GET /api/members/me`
 - [ ] JWT `type` 클레임(access/refresh) 확인, Refresh Token `jti` 클레임(같은 초 재발급 시 토큰 중복 방지), JWT 필터가 `/api/auth/**`는 건너뜀, `/error` 허용
 - [ ] Refresh Token + Redis: 재발급(로테이션), 로그아웃, 재사용 감지
 - [ ] 로그인 실패 5회 → 15분 잠금 (Redis `INCR` + TTL), 없는 이메일도 BCrypt 비교
 - [ ] 필터 단계 에러(401)도 API_SPEC 형식으로 응답
+
+**1단계 메모 (2026-11-03 기준)**
+- 작업 방식: Claude가 코드를 쓰고 자세히 설명하며, 직접 쓰겠다고 한 부분만 힌트·리뷰로 돕는다(`CLAUDE.md`).
+- 정해 둔 것: 서비스 클래스는 `@Transactional(readOnly = true)`, 쓰기 메서드만 `@Transactional`. 요청 DTO 이름은 `API_SPEC`·`openapi.yaml`을 따라 `SignupRequest`로 유지.
+- 알고 있는 한계: ① 동시 가입 시 `exists` 확인을 둘 다 통과하면 DB UNIQUE 위반(`DataIntegrityViolationException`)이 500으로 나간다. 필요해지면 `EMAIL_DUPLICATED`/`NICKNAME_DUPLICATED`로 변환한다. ② 인증 없는 요청은 지금 401이 아니라 403일 수 있다. 마지막 항목 "필터 단계 에러(401)"에서 `AuthenticationEntryPoint`로 맞춘다.
+- 이어서 할 때: `.env`가 있어야 테스트가 통과한다(`.env.example`을 복사). `docker compose up -d`로 MySQL·Redis를 먼저 띄우고 `./gradlew test`로 시작 상태를 확인한다.
 
 ## 2단계. 레시피 CRUD (사진 없이)
 
@@ -87,4 +100,5 @@ Spring Initializr(https://start.spring.io) 설정:
 
 | 날짜 | 단계 | 어려웠던 점 / 새로 이해한 것 |
 |---|---|---|
+| 2026-11-03 | 1단계 (진행 중) | `.env`가 없으면 `DB_URL`이 비어 `contextLoads`가 실패한다는 것을 원인 추적으로 확인. 쿼리 메서드는 `existsBy`/`findBy` 규칙과 필드명이 정확해야 하고, `boolean`(있는지)과 `Optional`(객체가 필요)을 구분한다. `@Transactional(readOnly = true)`를 클래스 기본값으로 두고 쓰기 메서드만 덮어쓴다 |
 | 2026-10-08 | 0단계 | MinIO 배포 중단 → 사진 저장소를 AWS S3로 변경. PC MySQL(3306)·로컬 Kubernetes(8080) 포트 충돌을 원인 추적으로 해결. 오픈소스는 "누가 관리하는가"도 본다 |
