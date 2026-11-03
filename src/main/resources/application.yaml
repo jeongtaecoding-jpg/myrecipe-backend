@@ -27,6 +27,11 @@ spring:
       port: ${REDIS_PORT:6379}
       password: ${REDIS_PASSWORD}
 
+jwt:
+  secret: ${JWT_SECRET}
+  access-expiration-seconds: ${JWT_ACCESS_EXPIRATION_SECONDS:1800}
+  refresh-expiration-seconds: ${JWT_REFRESH_EXPIRATION_SECONDS:1209600}
+
 logging:
   level:
     org.hibernate.SQL: debug   # 실행되는 SQL을 보면서 N+1을 확인

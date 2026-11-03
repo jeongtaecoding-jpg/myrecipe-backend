@@ -314,6 +314,8 @@ Spring의 `ResponseCookie`로 만든다.
 **JWT 필터 동작**
 - **`/api/auth/`로 시작하는 요청은 검사하지 않는다** (`OncePerRequestFilter`의 `shouldNotFilter`). 로그인은 이메일·비밀번호, 재발급·로그아웃은 쿠키의 Refresh Token으로 판단하므로 Access Token은 의미가 없다. 검사하면 만료된 Access Token 때문에 로그아웃 요청이 막히고, 로그아웃하려다 토큰이 새로 발급되는 일이 생긴다.
 - **토큰 종류를 확인한다.** Access Token과 Refresh Token은 같은 키로 서명하므로, 페이로드에 `type` 클레임(`access` / `refresh`)을 넣는다. 필터는 `type=access`만, 재발급은 `type=refresh`만 받는다. 확인하지 않으면 14일짜리 Refresh Token을 Access Token처럼 쓸 수 있다.
+- 라이브러리는 jjwt 0.13.0(`jjwt-api` + 런타임 `jjwt-impl`, `jjwt-jackson`)을 쓴다.
+- **Refresh Token에는 `jti`(랜덤 UUID) 클레임을 넣는다.** JWT는 내용이 같으면 서명도 같고 `iat`는 초 단위라서, 같은 회원에게 같은 초 안에 두 번 발급하면 똑같은 토큰이 나온다. 그러면 "이미 교체된 예전 토큰의 재사용"을 해시 비교로 감지할 수 없다. 발급마다 다른 `jti`를 넣어 항상 다른 토큰이 되게 한다.
 - 서명 알고리즘은 HS256으로 고정하고, 토큰 헤더의 `alg` 값을 믿지 않는다. `JWT_SECRET`은 32바이트(256비트) 이상이어야 하며, 짧으면 앱이 시작되지 않게 한다.
 - `Authorization` 헤더가 없으면 그냥 통과시킨다. 인증이 필요한 API라면 뒤에서 401이 난다.
 - 헤더가 있으면 검증한다. 성공하면 로그인 사용자를 SecurityContext에 넣고, 실패하면(만료·위조) 허용된 API여도 401(`TOKEN_EXPIRED`, `TOKEN_INVALID`)로 응답한다. 프론트는 `TOKEN_EXPIRED`면 재발급하고, `TOKEN_INVALID`면 로그아웃 상태로 만든다.

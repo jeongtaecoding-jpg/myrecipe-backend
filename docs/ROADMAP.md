@@ -29,13 +29,13 @@ Spring Initializr(https://start.spring.io) 설정:
 
 압축을 풀면 `myrecipe/` 폴더가 나온다. 이 폴더 이름을 `myrecipe_backend`로 바꿔 `my-recipe-v1/` 바로 아래에 둔다.
 
-나머지 라이브러리는 필요한 단계에서 직접 추가한다: JWT(1단계), AWS SDK S3(5단계), springdoc-openapi(6단계).
+나머지 라이브러리는 필요한 단계에서 직접 추가한다: JWT(1단계, jjwt 0.13.0으로 결정), AWS SDK S3(5단계), springdoc-openapi(6단계).
 
 ## 1단계. 공통 기반 + 회원가입/로그인
 
 - [ ] `global`: BaseTimeEntity, ErrorCode, BusinessException, 전역 예외 처리, 에러 응답 형식
 - [ ] 회원가입(BCrypt), 로그인(Access Token만), JWT 필터, `/api/members/me`
-- [ ] JWT `type` 클레임(access/refresh) 확인, JWT 필터가 `/api/auth/**`는 건너뜀, `/error` 허용
+- [ ] JWT `type` 클레임(access/refresh) 확인, Refresh Token `jti` 클레임(같은 초 재발급 시 토큰 중복 방지), JWT 필터가 `/api/auth/**`는 건너뜀, `/error` 허용
 - [ ] Refresh Token + Redis: 재발급(로테이션), 로그아웃, 재사용 감지
 - [ ] 로그인 실패 5회 → 15분 잠금 (Redis `INCR` + TTL), 없는 이메일도 BCrypt 비교
 - [ ] 필터 단계 에러(401)도 API_SPEC 형식으로 응답
