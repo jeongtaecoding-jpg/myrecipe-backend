@@ -39,8 +39,8 @@ Spring Initializr(https://start.spring.io) 설정:
   - [x] `SignupRequest`, `SignupResponse` (`member/dto`)
   - [x] `SecurityConfig`: `PasswordEncoder`(BCrypt), stateless, 가입·`/api/auth/**`·`/error` 허용
   - [x] `MemberService.signup` (중복 확인 → 인코딩 → 저장)
-  - [ ] `MemberController` `POST /api/members/signup` → 201 (**다음 할 일**)
-  - [ ] 회원가입 테스트: 서비스 단위 테스트(성공, 이메일·닉네임 중복), 컨트롤러 테스트(검증 실패 400, 중복 409, 성공 201). `signup`의 INSERT는 아직 테스트로 확인하지 못했다
+  - [x] `MemberController` `POST /api/members/signup` → 201 (작성·`compileJava` 통과. 실행·테스트는 아직 안 함)
+  - [ ] 회원가입 테스트: 서비스 단위 테스트(성공, 이메일·닉네임 중복), 컨트롤러 테스트(검증 실패 400, 중복 409, 성공 201). `signup`의 INSERT는 아직 테스트로 확인하지 못했다 (**다음 할 일**, 컨트롤러 테스트 방식은 아래 메모의 결정 대기 참고)
   - [ ] 로그인(Access Token 발급), JWT 발급·검증 클래스, JWT 필터, `GET /api/members/me`
 - [ ] JWT `type` 클레임(access/refresh) 확인, Refresh Token `jti` 클레임(같은 초 재발급 시 토큰 중복 방지), JWT 필터가 `/api/auth/**`는 건너뜀, `/error` 허용
 - [ ] Refresh Token + Redis: 재발급(로테이션), 로그아웃, 재사용 감지
@@ -51,6 +51,8 @@ Spring Initializr(https://start.spring.io) 설정:
 - 작업 방식: Claude가 코드를 쓰고 자세히 설명하며, 직접 쓰겠다고 한 부분만 힌트·리뷰로 돕는다(`CLAUDE.md`).
 - 정해 둔 것: 서비스 클래스는 `@Transactional(readOnly = true)`, 쓰기 메서드만 `@Transactional`. 요청 DTO 이름은 `API_SPEC`·`openapi.yaml`을 따라 `SignupRequest`로 유지.
 - 알고 있는 한계: ① 동시 가입 시 `exists` 확인을 둘 다 통과하면 DB UNIQUE 위반(`DataIntegrityViolationException`)이 500으로 나간다. 필요해지면 `EMAIL_DUPLICATED`/`NICKNAME_DUPLICATED`로 변환한다. ② 인증 없는 요청은 지금 401이 아니라 403일 수 있다. 마지막 항목 "필터 단계 에러(401)"에서 `AuthenticationEntryPoint`로 맞춘다.
+- **결정 대기 (2026-11-05): 컨트롤러 테스트 방식.** A) standalone MockMvc + Mockito(빠름, 보안 설정 검증 불가) / B) `@WebMvcTest` + `SecurityConfig` import + 서비스 목(`permitAll` 같은 보안 회귀 검증, INSERT는 못 봄) / C) `@SpringBootTest` + MockMvc(실제 DB로 INSERT·UNIQUE·`createdAt` 확인, 느리고 개발 DB 오염 주의). 추천은 서비스 단위 테스트 + B + C 하나. 상세 비교는 `notes/Work Log_11_05.md`.
+- 테스트를 쓰기 전 확인할 것: ① B·C는 `build.gradle`에 `spring-boot-starter-webmvc-test` 같은 테스트 의존성이 필요할 수 있다(Boot 4 모듈 구성, 공식 문서로 확인 후 추가 여부를 사람이 결정). ② 테스트 전용 설정이 없어 로컬 테스트가 `.env`의 개발 DB를 쓴다. ③ CI에는 Redis 서비스와 `JWT_SECRET`이 없다. 지금은 아무 코드도 읽지 않아 통과하지만, JWT 클래스나 Redis 사용 코드가 들어가면 CI를 고쳐야 한다. ④ 테스트에 `@Transactional`을 붙이면 서비스의 `readOnly`가 무시되어 "읽기 전용에서 저장" 실험이 재현되지 않는다.
 - 이어서 할 때: `.env`가 있어야 테스트가 통과한다(`.env.example`을 복사). `docker compose up -d`로 MySQL·Redis를 먼저 띄우고 `./gradlew test`로 시작 상태를 확인한다.
 
 ## 2단계. 레시피 CRUD (사진 없이)
@@ -100,5 +102,6 @@ Spring Initializr(https://start.spring.io) 설정:
 
 | 날짜 | 단계 | 어려웠던 점 / 새로 이해한 것 |
 |---|---|---|
+| 2026-11-05 | 1단계 (진행 중) | `MemberController` 작성(`@Valid` → 서비스 → `SignupResponse` → 201). 지금까지 코드를 순서대로 복습: `@EnableJpaAuditing`이 꺼지면 `@CreatedDate`가 안 채워져 `save`에서 NOT NULL 오류, 핸들러는 구체적인 예외 타입이 우선이라 `ResponseEntityExceptionHandler` 상속이 필요, `exists` 확인과 INSERT 사이 틈은 DB UNIQUE만 막음. 2~5번 질문(핸들러 우선순위·UNIQUE·`readOnly` 저장·`/error` 허용)은 아직 설명할 수 없어 복습 필요 |
 | 2026-11-03 | 1단계 (진행 중) | `.env`가 없으면 `DB_URL`이 비어 `contextLoads`가 실패한다는 것을 원인 추적으로 확인. 쿼리 메서드는 `existsBy`/`findBy` 규칙과 필드명이 정확해야 하고, `boolean`(있는지)과 `Optional`(객체가 필요)을 구분한다. `@Transactional(readOnly = true)`를 클래스 기본값으로 두고 쓰기 메서드만 덮어쓴다 |
 | 2026-10-08 | 0단계 | MinIO 배포 중단 → 사진 저장소를 AWS S3로 변경. PC MySQL(3306)·로컬 Kubernetes(8080) 포트 충돌을 원인 추적으로 해결. 오픈소스는 "누가 관리하는가"도 본다 |
