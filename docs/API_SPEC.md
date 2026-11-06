@@ -7,7 +7,9 @@
 
 - 이 명세를 OpenAPI 3.0 형식으로 옮긴 파일이 `openapi.yaml`이다. [Swagger Editor](https://editor.swagger.io)에 붙여넣거나 VS Code의 OpenAPI 확장으로 열면 Swagger UI 화면으로 볼 수 있다.
 - API를 바꾸면 이 문서와 `openapi.yaml`을 같은 커밋에서 함께 고친다.
-- 구현을 시작하면 springdoc-openapi를 추가해 코드에서 Swagger UI를 자동 생성하고(`/swagger-ui`), 이 파일과 비교해 설계와 구현이 어긋난 곳을 찾는다. Swagger UI는 로컬 개발 환경에서만 연다.
+- 구현을 시작하면 springdoc-openapi를 추가해 코드에서 Swagger UI를 자동 생성하고(`/swagger-ui`), 이 파일과 비교해 설계와 구현이 어긋난 곳을 찾는다. Swagger UI는 로컬 개발 환경(`local` 프로필)에서만 열고 `prod`에서는 끈다.
+- **에러 응답 예시는 코드에서 자동으로 만든다**(msa4-meerkatgram 방식). 컨트롤러 메서드에 `@ApiErrorCodes({ErrorCode.RECIPE_NOT_FOUND, ...})`처럼 그 API가 던질 수 있는 `ErrorCode`만 나열하면, `OperationCustomizer`가 상태 코드별로 `{status, code, message, fieldErrors}` 예시를 만들어 Swagger에 붙인다. 예시가 enum에서 나오므로 실제 응답과 어긋나지 않는다. 요청 DTO 필드에는 `@Schema(description, example)`를 단다.
+- **표와 enum의 일치는 테스트로 지킨다.** 6장 에러 코드 표를 읽어 `ErrorCode` enum의 코드·상태와 비교하는 테스트(`ErrorCodeSpecTest`)를 둔다. 표만 고치거나 enum만 고치면 테스트가 실패한다.
 
 ## 0. 공통 규칙
 
@@ -17,6 +19,12 @@
 - 요청·응답 본문: JSON (`Content-Type: application/json`). 사진 파일은 이 API로 보내지 않고 S3에 직접 올린다([3. 이미지](#3-이미지))
 - 날짜·시간: ISO 8601 (`2026-10-02T11:07:00`)
 - JSON 필드 이름: camelCase
+- **입력값 정리(서버가 저장·비교 전에 한다)**
+  - 앞뒤 공백을 지운다: `email`, `nickname`, `title`, `ingredients[].name`, `ingredients[].amount`, `description`, `steps[].content`, `comments.content`, 검색어. 공백만 있는 값은 빈 값으로 보고 필수 필드면 `INVALID_INPUT`. 길이 규칙은 **지운 뒤 길이**로 판단한다. `password`는 지우지 않는다.
+  - `email`은 소문자로 바꿔 저장·비교한다(로그인 실패 횟수 키 `login-fail:{email}`도 소문자). 가입 때와 로그인 때 같은 규칙을 쓴다.
+  - 선택 필드(`description`, `amount`, `thumbnailKey`, `imageKey`)에 빈 문자열이 오면 `null`로 저장한다.
+- **정의되지 않은 필드는 거부한다.** 요청 본문에 명세에 없는 필드가 있으면 `400 INVALID_INPUT`. 수정 API(`PUT`)는 전체 교체라서, 필드 이름 오타(`thumbnailkey`)가 조용히 무시되면 기존 값이 지워지기 때문이다.
+- 모든 응답에 `X-Request-Id` 헤더가 붙는다(서버 로그의 `requestId`와 같은 값). 문제 문의 시 이 값을 알려 준다. 요청에 같은 헤더를 보내면 그 값을 쓰고, 없으면 서버가 만든다.
 
 ### 인증
 
@@ -35,6 +43,10 @@
 
 - 단건 조회·생성 결과는 데이터를 그대로 반환한다.
 - 목록은 아래 페이지 형식으로 반환한다. 페이지 번호는 0부터, `size` 기본 20·최대 50.
+  - `size`가 50을 넘으면 50으로 줄여서 처리한다(에러 아님).
+  - `page`가 0 미만이거나 `size`가 1 미만이거나 숫자가 아니면 `400 INVALID_INPUT`.
+  - `totalElements`/`totalPages`는 매 요청마다 count 쿼리를 한 번 더 실행한다. MVP는 유지하되, 재료 검색(조인)의 count가 느려지면 `hasNext`만 내리는 방식(`Slice`, size+1건 조회)으로 바꾸는 것을 검토한다(3단계에서 측정).
+  - 정렬은 항상 `createdAt DESC, id DESC`(같은 시각이어도 순서가 흔들리지 않게 id를 함께 쓴다).
 
 ```json
 {
@@ -69,6 +81,18 @@
 ```
 
 `fieldErrors`는 입력값 검증 실패(400)일 때만 들어간다.
+
+스프링이 먼저 거르는 에러(없는 URL, 허용하지 않는 메서드, 잘못된 Content-Type, 숫자 자리에 문자)도 같은 형식으로 응답한다: `NOT_FOUND`(404), `METHOD_NOT_ALLOWED`(405), `UNSUPPORTED_MEDIA_TYPE`(415), 경로·쿼리 값 형식 오류는 `INVALID_INPUT`(400).
+
+### 장애 시 동작
+
+| 장애 | 영향받는 API | 응답 |
+|---|---|---|
+| Redis 다운 | 로그인·토큰 재발급·로그아웃만 | `503 SERVICE_UNAVAILABLE` (그 외 API는 Access Token만 검증하므로 정상 동작) |
+| S3 다운 | Presigned URL 발급, 레시피 저장(사진 검증) | `503 SERVICE_UNAVAILABLE` |
+| DB 다운 | 대부분 | `500 INTERNAL_ERROR` |
+
+`503`은 "잠시 후 다시 시도"를 뜻한다. 프론트는 `503`을 받아도 **로그아웃시키지 않는다**(INTEGRATION.md). 가능하면 `Retry-After` 헤더를 붙인다.
 
 ## 1. API 목록
 
@@ -108,8 +132,8 @@
 | 필드 | 규칙 |
 |---|---|
 | email | 필수, 이메일 형식, 100자 이하 |
-| password | 필수, 8~20자 |
-| nickname | 필수, 2~30자 |
+| password | 필수, 8~20자. 글자 종류 제한은 없다(영문·숫자·한글·특수문자 모두 허용, 공백 포함 가능). BCrypt 입력 한도(72바이트) 안이다 |
+| nickname | 필수, 2~30자. 한글·영문·숫자·공백·`_` 등 글자 제한 없음(출력은 항상 이스케이프). 닉네임 중복은 대소문자 구분 없이 비교(DB 기본 정렬 규칙) |
 
 응답 `201 Created`
 
@@ -180,6 +204,7 @@
 2. 받은 `uploadUrl`로 파일을 `PUT` 한다(S3로 직접, 아래 참고).
 3. 레시피 등록·수정 요청에 `objectKey`를 `thumbnailKey`, `steps[].imageKey`로 넣는다.
 4. 서버는 레시피를 저장할 때 그 객체가 실제로 올라갔는지, 요청한 회원이 발급받은 키인지, 형식·크기가 맞는지 다시 확인한다.
+5. 수정 화면에서 **바꾸지 않는 사진**은 상세 응답의 `thumbnailKey`, `steps[].imageKey`를 그대로 다시 보낸다(키를 보내지 않으면 사진이 지워진 것으로 처리).
 
 ### Presigned URL 발급 `POST /api/images/presigned-url`
 
@@ -205,7 +230,7 @@
 }
 ```
 
-- `objectKey`: `recipes/{memberId}/{yyyy}/{MM}/{dd}/{UUID}.{확장자}`. 회원 ID가 키에 들어가므로 다른 회원이 발급받은 키는 쓸 수 없다.
+- `objectKey`: `recipes/{memberId}/{yyyy}/{MM}/{dd}/{UUID}.{확장자}`. 확장자는 `contentType`에서 정한다(`image/jpeg`→`jpg`, `image/png`→`png`, `image/webp`→`webp`). 날짜는 서버(Asia/Seoul) 기준. 회원 ID가 키에 들어가므로 다른 회원이 발급받은 키는 쓸 수 없다.
 - `uploadUrl`: 5분 동안만 유효한 업로드 URL (설계 기본값). 발급 시 정한 `contentType`으로만 올릴 수 있다.
 - `imageUrl`: 업로드 후 미리보기에 쓰는 공개 URL.
 
@@ -264,15 +289,18 @@ Content-Type: image/jpeg   ← 발급 요청의 contentType과 같아야 함
 
 응답 `201 Created`: [레시피 상세](#레시피-상세-get-apirecipesrecipeid)와 같은 형식
 
-에러: `INVALID_INPUT`(400), `INGREDIENT_DUPLICATED`(400), `IMAGE_NOT_FOUND`(400), `IMAGE_INVALID_TYPE`(400), `IMAGE_TOO_LARGE`(400)
+에러: `INVALID_INPUT`(400), `INGREDIENT_DUPLICATED`(400), `IMAGE_NOT_FOUND`(400), `IMAGE_INVALID_TYPE`(400), `IMAGE_TOO_LARGE`(400), `IMAGE_ALREADY_USED`(400)
 
 사진 키는 서버가 저장 전에 확인한다: 키가 `recipes/{내 memberId}/`로 시작하는지, S3에 객체가 있는지, 실제 형식·크기가 규칙에 맞는지, 파일 앞부분의 바이트가 실제 이미지(JPEG·PNG·WebP)인지.
+
+- **한 사진 키는 한 곳에만 쓴다.** 같은 요청 안에서 키가 겹치거나(대표 사진과 단계 사진 포함), 다른 레시피가 이미 쓰는 키면 `IMAGE_ALREADY_USED`. (같은 키를 두 레시피가 쓰면 한쪽을 지울 때 다른 쪽 사진이 사라지기 때문이다.)
+- 수정 요청에서 **이 레시피가 이미 쓰고 있는 키**는 다시 확인하지 않는다(S3 호출 절약). 새 키만 확인한다.
 
 ### 레시피 목록·재료 검색 `GET /api/recipes`
 
 | 쿼리 파라미터 | 설명 |
 |---|---|
-| ingredient | 선택. 재료 이름과 정확히 일치하는 재료가 들어간 레시피만 조회. 예: `?ingredient=두부` |
+| ingredient | 선택. 재료 이름과 정확히 일치하는 재료가 들어간 레시피만 조회(앞뒤 공백 제거, 대소문자 구분 없음). 한 번에 재료 하나만 검색한다. 빈 값이면 검색 조건이 없는 것으로 보고 전체 목록. 예: `?ingredient=두부` |
 | page, size | 페이지 (기본 0, 20) |
 
 정렬은 최신 등록순이다. 일치하는 재료가 없으면 빈 목록을 반환한다(에러 아님).
@@ -300,6 +328,7 @@ Content-Type: image/jpeg   ← 발급 요청의 contentType과 같아야 함
   "title": "두부조림",
   "description": "밥반찬으로 좋은 간단한 두부조림",
   "thumbnailUrl": "https://d1234example.cloudfront.net/recipes/1/2026/10/02/3f9c1a2e.jpg",
+  "thumbnailKey": "recipes/1/2026/10/02/3f9c1a2e.jpg",
   "writer": { "memberId": 1, "nickname": "두부요리사" },
   "ingredients": [
     { "name": "두부", "amount": "1모" },
@@ -307,9 +336,9 @@ Content-Type: image/jpeg   ← 발급 요청의 contentType과 같아야 함
     { "name": "대파", "amount": "약간" }
   ],
   "steps": [
-    { "order": 1, "content": "두부를 1cm 두께로 썬다.", "imageUrl": null },
-    { "order": 2, "content": "팬에 두부를 노릇하게 굽는다.", "imageUrl": "https://d1234example.cloudfront.net/recipes/1/2026/10/02/7ab1c0d4.jpg" },
-    { "order": 3, "content": "양념장을 붓고 졸인다.", "imageUrl": null }
+    { "order": 1, "content": "두부를 1cm 두께로 썬다.", "imageUrl": null, "imageKey": null },
+    { "order": 2, "content": "팬에 두부를 노릇하게 굽는다.", "imageUrl": "https://d1234example.cloudfront.net/recipes/1/2026/10/02/7ab1c0d4.jpg", "imageKey": "recipes/1/2026/10/02/7ab1c0d4.jpg" },
+    { "order": 3, "content": "양념장을 붓고 졸인다.", "imageUrl": null, "imageKey": null }
   ],
   "likeCount": 12,
   "likedByMe": false,
@@ -319,7 +348,9 @@ Content-Type: image/jpeg   ← 발급 요청의 contentType과 같아야 함
 }
 ```
 
-`likedByMe`는 토큰 없이 조회하면 항상 `false`다.
+`likedByMe`는 토큰 없이 조회하면 항상 `false`다. `thumbnailKey`, `imageKey`는 수정 화면이 바꾸지 않은 사진을 그대로 다시 보내기 위한 값이다(사진 주소 자체가 공개이므로 키를 숨길 필요는 없다).
+
+**조리 순서 `order`**: 요청 배열의 순서대로 1부터 서버가 매긴다(요청에 `order`를 보내지 않는다).
 
 에러: `RECIPE_NOT_FOUND`(404)
 
@@ -329,9 +360,9 @@ Content-Type: image/jpeg   ← 발급 요청의 contentType과 같아야 함
 
 응답 `200 OK`: 레시피 상세 형식
 
-에러: `INVALID_INPUT`(400), `INGREDIENT_DUPLICATED`(400), `IMAGE_NOT_FOUND`(400), `IMAGE_INVALID_TYPE`(400), `IMAGE_TOO_LARGE`(400), `RECIPE_FORBIDDEN`(403), `RECIPE_NOT_FOUND`(404)
+에러: `INVALID_INPUT`(400), `INGREDIENT_DUPLICATED`(400), `IMAGE_NOT_FOUND`(400), `IMAGE_INVALID_TYPE`(400), `IMAGE_TOO_LARGE`(400), `IMAGE_ALREADY_USED`(400), `RECIPE_FORBIDDEN`(403), `RECIPE_NOT_FOUND`(404)
 
-교체되어 더 이상 쓰지 않는 사진은 DB 저장이 끝난 뒤 S3에서 지운다. 지우기에 실패해도 수정은 성공으로 처리하고 로그만 남긴다.
+수정 전 키 목록과 새 키 목록을 비교해, **새 목록에 없는 키**(교체·삭제된 사진)를 지울 대상으로 삼는다. 교체되어 더 이상 쓰지 않는 사진은 DB 저장이 끝난 뒤 S3에서 지운다. 지우기에 실패해도 수정은 성공으로 처리하고 로그만 남긴다.
 
 ### 레시피 삭제 `DELETE /api/recipes/{recipeId}`
 
@@ -344,6 +375,8 @@ Content-Type: image/jpeg   ← 발급 요청의 contentType과 같아야 함
 ## 5. 좋아요·댓글
 
 ### 좋아요 `POST /api/recipes/{recipeId}/likes`
+
+자기 레시피에도 누를 수 있다(제한 없음).
 
 응답 `201 Created`
 
@@ -413,6 +446,7 @@ Content-Type: image/jpeg   ← 발급 요청의 contentType과 같아야 함
 | NICKNAME_DUPLICATED | 409 | 이미 사용 중인 닉네임입니다. | 회원가입 |
 | IMAGE_INVALID_TYPE | 400 | 지원하지 않는 이미지 형식입니다. | Presigned URL 발급, 레시피 저장 (Content-Type 또는 실제 파일 내용이 이미지가 아님) |
 | IMAGE_TOO_LARGE | 400 | 이미지는 5MB 이하만 올릴 수 있습니다. | Presigned URL 발급, 레시피 저장 |
+| IMAGE_ALREADY_USED | 400 | 이미 다른 곳에서 사용 중인 사진입니다. 사진을 다시 올려 주세요. | 레시피 저장 (키가 요청 안에서 겹치거나 다른 레시피가 이미 사용) |
 | IMAGE_NOT_FOUND | 400 | 업로드된 사진을 찾을 수 없습니다. 다시 올려 주세요. | 레시피 저장 (업로드 안 됨, 다른 회원의 키) |
 | INGREDIENT_DUPLICATED | 400 | 같은 재료가 두 번 입력되었습니다. | 레시피 등록·수정 |
 | RECIPE_NOT_FOUND | 404 | 레시피를 찾을 수 없습니다. | 레시피·좋아요·댓글 API |
@@ -421,4 +455,21 @@ Content-Type: image/jpeg   ← 발급 요청의 contentType과 같아야 함
 | LIKE_NOT_FOUND | 404 | 좋아요한 기록이 없습니다. | 좋아요 취소 |
 | COMMENT_NOT_FOUND | 404 | 댓글을 찾을 수 없습니다. | 댓글 삭제 |
 | COMMENT_FORBIDDEN | 403 | 댓글 작성자만 삭제할 수 있습니다. | 댓글 삭제 |
+| FORBIDDEN | 403 | 접근 권한이 없습니다. | 인증은 됐지만 권한 없음(스프링 시큐리티 단계). 지금은 쓰는 곳 없음 — 도메인 권한은 `*_FORBIDDEN`을 쓴다 |
+| NOT_FOUND | 404 | 요청한 주소를 찾을 수 없습니다. | 존재하지 않는 URL |
+| METHOD_NOT_ALLOWED | 405 | 지원하지 않는 요청 방식입니다. | URL은 있으나 HTTP 메서드가 다름 |
+| UNSUPPORTED_MEDIA_TYPE | 415 | 지원하지 않는 요청 형식입니다. | `application/json`이 아닌 본문 |
+| SERVICE_UNAVAILABLE | 503 | 잠시 후 다시 시도해 주세요. | Redis·S3 같은 외부 의존 장애 |
 | INTERNAL_ERROR | 500 | 일시적인 오류가 발생했습니다. | 예상하지 못한 서버 오류 (원인은 로그에만 남김) |
+
+## 7. 권한 정책 (소유권 검증)
+
+| 동작 | 누가 | 위반 시 |
+|---|---|---|
+| 레시피 수정·삭제 | 작성자 본인 | `RECIPE_FORBIDDEN` 403 |
+| 댓글 삭제 | 댓글 작성자 본인 | `COMMENT_FORBIDDEN` 403 |
+| 사진 키(`imageKey`) 사용 | 그 키를 발급받은 본인(키에 memberId 포함) | `IMAGE_NOT_FOUND` 400 |
+
+- 존재 여부 확인(404)이 권한 확인(403)보다 먼저다. 없는 리소스는 항상 404.
+- 서비스 계층은 스프링의 `AccessDeniedException`이 아니라 `BusinessException(*_FORBIDDEN)`을 던진다. (시큐리티 단계의 `AccessDeniedException`은 `FORBIDDEN`으로 응답)
+- 인증 오류의 응답 형식은 필터 단계에서 나는 것도 `GlobalExceptionHandler`와 같은 `ErrorResponse`다.
