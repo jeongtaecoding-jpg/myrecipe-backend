@@ -1,6 +1,7 @@
 # API 명세 (MVP)
 
-> 기준일: 2026-10-02 · 상태: 초안 (구현 전)
+> 기준일: 2026-10-02 · 상태: 초안 (구현 전) · 최종 수정: 2026-11-08 (인기 재료 API)
+> 2026-11-08 판정: 로그인 실패 잠금(429 `LOGIN_TOO_MANY_ATTEMPTS`, `login-fail`), Redis 장애 시 503, Refresh 재발급 Lua 원자화, `ErrorCodeSpecTest`는 **MVP 이후로 미뤘다**(ROADMAP "MVP 이후 (미룬 항목)"). 이 문서의 해당 설계는 나중에 구현할 목표로 남겨 두며, MVP에서는 구현하지 않는다.
 > 읽는 때: API를 추가·변경하거나 프론트에서 호출할 때
 
 ## Swagger(OpenAPI) 문서
@@ -106,6 +107,7 @@
 | 이미지 | POST | `/api/images/presigned-url` | 필수 | 사진 업로드용 Presigned URL 발급 |
 | 레시피 | POST | `/api/recipes` | 필수 | 레시피 등록 |
 | 레시피 | GET | `/api/recipes` | 선택 | 목록(최신순), `ingredient`로 재료 검색 |
+| 레시피 | GET | `/api/recipes/popular-ingredients` | - | 레시피에 많이 쓰인 재료 TOP N |
 | 레시피 | GET | `/api/recipes/{recipeId}` | 선택 | 상세 |
 | 레시피 | PUT | `/api/recipes/{recipeId}` | 필수 | 수정 (작성자만) |
 | 레시피 | DELETE | `/api/recipes/{recipeId}` | 필수 | 삭제 (작성자만) |
@@ -316,6 +318,27 @@ Content-Type: image/jpeg   ← 발급 요청의 contentType과 같아야 함
   "likeCount": 12,
   "createdAt": "2026-10-02T11:07:00"
 }
+```
+
+### 인기 재료 `GET /api/recipes/popular-ingredients`
+
+> 2026-11-08 추가. 레시피에 많이 쓰인 재료를 레시피 수 순으로 보여 준다. 화면에서는 검색창 아래 재료 버튼으로 쓰고, 누르면 `GET /api/recipes?ingredient={name}`으로 검색한다.
+
+| 쿼리 파라미터 | 설명 |
+|---|---|
+| size | 선택. 기본 10, 최대 20. 20을 넘으면 20으로 줄여서 처리하고(에러 아님), 1 미만이거나 숫자가 아니면 `400 INVALID_INPUT` |
+
+- 정렬은 레시피 수가 많은 순, 같으면 재료 이름순이다. 어떤 레시피에도 쓰이지 않은 재료는 나오지 않는다. 레시피가 없으면 빈 배열이다.
+- **페이지 형식이 아니라 배열로 응답한다.** 정해진 개수만 보여 주는 상위 목록이라 공통 규칙(목록은 페이지 형식)의 예외로 둔다.
+- 경로가 `/api/recipes/{recipeId}`와 겹쳐 보이지만, 스프링은 고정 경로를 경로 변수보다 먼저 매칭한다.
+
+응답 `200 OK`
+
+```json
+[
+  { "name": "두부", "recipeCount": 12 },
+  { "name": "대파", "recipeCount": 9 }
+]
 ```
 
 ### 레시피 상세 `GET /api/recipes/{recipeId}`

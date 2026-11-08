@@ -1,6 +1,7 @@
 # 코드 컨벤션
 
-> 기준일: 2026-10-02 · 상태: 초안
+> 기준일: 2026-10-02 · 상태: 초안 · 최종 수정: 2026-11-08 (JPA·MyBatis 경계)
+> 2026-11-08 판정: 로그인 실패 잠금(429 `LOGIN_TOO_MANY_ATTEMPTS`, `login-fail`), Redis 장애 시 503, Refresh 재발급 Lua 원자화, `ErrorCodeSpecTest`는 **MVP 이후로 미뤘다**(ROADMAP "MVP 이후 (미룬 항목)"). 이 문서의 해당 설계는 나중에 구현할 목표로 남겨 두며, MVP에서는 구현하지 않는다.
 > 읽는 때: 코드를 작성하거나 리뷰할 때
 
 ## 0. 프로젝트 기본 설정 (확정)
@@ -27,7 +28,8 @@ com.myrecipe
 ├─ member / recipe / ingredient / like / comment
 │   ├─ controller
 │   ├─ service
-│   ├─ repository
+│   ├─ repository  (JPA)
+│   ├─ mapper      (MyBatis 조회 전용 인터페이스. SQL은 resources/mapper/{도메인}/*.xml)
 │   ├─ entity
 │   ├─ dto
 │   └─ event       (그 모듈이 발행하는 이벤트. 예: recipe/event/RecipeDeletedEvent)
@@ -41,7 +43,7 @@ com.myrecipe
     └─ entity      (BaseTimeEntity)
 ```
 
-- 다른 도메인의 Repository를 직접 쓰지 않는다. 다른 도메인의 Service를 호출한다.
+- 다른 도메인의 Repository·Mapper를 직접 쓰지 않는다. 다른 도메인의 Service를 호출한다. 단, 조회 전용 Mapper의 SQL은 의존 방향(recipe → ingredient) 안에서 다른 모듈의 테이블을 JOIN할 수 있다(재료 검색, 인기 재료는 recipe 모듈의 Mapper).
 - 의존 방향은 한쪽으로만: like·comment → recipe → member·ingredient. **recipe는 like·comment를 import하지 않는다.** 순환이 생기면 `@Lazy`로 덮지 말고 이벤트나 facade로 푼다(아키텍처 문서 "의존 방향 규칙").
 - `facade`는 도메인 Service만 호출하고, Repository·Entity를 직접 다루지 않는다. 도메인 쪽(Service·Repository·Entity)은 facade를 import하지 않는다. facade를 부르는 것은 Controller뿐이다.
 - `global`은 도메인 패키지를 import하지 않는다.
@@ -78,7 +80,13 @@ com.myrecipe
 - 이벤트에는 엔티티가 아니라 ID 같은 값만 담는다.
 
 **Repository**
-- 단순 조회는 Spring Data JPA 메서드 이름, 조인이 필요한 조회는 `@Query`(JPQL)를 쓴다.
+- **JPA와 MyBatis의 경계 (2026-11-08 결정, `DIRECTION.md`)**
+  - JPA: 쓰기(저장·수정·삭제) 전부, ID 단건 조회, 상세 조회, 일반 레시피 목록. 단순 조회는 Spring Data JPA 메서드 이름, 조인이 필요하면 `@Query`(JPQL).
+  - MyBatis: 재료 검색 목록, 인기 재료 집계처럼 SQL을 직접 써야 하는 **읽기 전용** 조회. 결과는 Entity가 아니라 응답용 DTO(record)로 받는다.
+  - MyBatis로는 INSERT·UPDATE·DELETE를 하지 않는다. 쓰기를 JPA로 모아 영속성 컨텍스트와 DB가 어긋나는 경로를 없앤다. (`INSERT IGNORE`, `like_count` 증감은 JPA 네이티브·`@Modifying` 쿼리로 둔다.)
+  - 같은 트랜잭션에서 JPA로 쓴 직후 MyBatis로 조회하지 않는다. 꼭 필요하면 `flush()`를 명시적으로 부르고 이유를 주석으로 남긴다.
+  - MyBatis 파라미터는 `#{}`만 쓴다. `${}`는 정렬 컬럼처럼 불가피할 때만, 허용 값 목록으로 검증한 뒤 쓴다(SQL Injection 방지).
+  - Mapper SQL은 실행 계획(`EXPLAIN`)을 확인한 뒤 반영하고, 확인한 인덱스를 XML 주석으로 남긴다.
 - N+1이 생기는 목록 조회는 fetch join 또는 `@BatchSize`로 처리하고, 이유를 주석으로 남긴다.
 - S3 접근은 `global/storage`의 `StorageService` 한 곳에서만 한다. 버킷 이름, 키 규칙, 공개 URL 조립을 다른 클래스에서 직접 다루지 않는다. DB에는 객체 키만 저장하고 URL은 응답 DTO를 만들 때 조립한다.
 - S3 객체 삭제는 DB 트랜잭션 안에서 하지 않고, 커밋 후(`@TransactionalEventListener(phase = AFTER_COMMIT)`) 한다.

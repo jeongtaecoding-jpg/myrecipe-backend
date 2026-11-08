@@ -1,6 +1,7 @@
 # 레시피 사이트 ERD (MVP)
 
-> 기준일: 2026-10-02 · 상태: 설계 (구현 전)
+> 기준일: 2026-10-02 · 상태: 설계 (구현 전) · 최종 수정: 2026-11-08 (조회 방식 표시, 인기 재료 쿼리)
+> 2026-11-08 판정: 로그인 실패 잠금(429 `LOGIN_TOO_MANY_ATTEMPTS`, `login-fail`), Redis 장애 시 503, Refresh 재발급 Lua 원자화, `ErrorCodeSpecTest`는 **MVP 이후로 미뤘다**(ROADMAP "MVP 이후 (미룬 항목)"). 이 문서의 해당 설계는 나중에 구현할 목표로 남겨 두며, MVP에서는 구현하지 않는다.
 
 MVP 기능(회원가입/로그인, 레시피 CRUD, 좋아요·댓글, 재료 검색)에 필요한 MySQL 테이블 7개와, Redis에 저장하는 Refresh Token·로그인 실패 횟수, AWS S3에 저장하는 사진이다.
 
@@ -119,10 +120,11 @@ erDiagram
 
 | 기능 | 테이블 | 핵심 |
 | --- | --- | --- |
-| 재료로 검색 | ingredient, recipe\_ingredient, recipe | 재료 이름으로 `ingredient.id`를 찾고, 그 재료가 연결된 레시피를 최신순 페이징 |
+| 재료로 검색 | ingredient, recipe\_ingredient, recipe | 재료 이름으로 `ingredient.id`를 찾고, 그 재료가 연결된 레시피를 최신순 페이징 (MyBatis) |
 | 좋아요 | recipe\_like, recipe | 행 추가와 `like_count + 1`을 한 트랜잭션에서. 중복은 UNIQUE 위반으로 거부 |
 | 레시피 목록 | recipe, member | 작성자 닉네임을 fetch join, 페이징. 재료·단계는 상세에서만 조회 |
 | 레시피 상세 | recipe, recipe\_step, recipe\_ingredient, ingredient | 단계와 재료를 각각 조회해 N+1 방지 |
+| 인기 재료 | recipe\_ingredient, ingredient | 재료별 레시피 수를 GROUP BY로 세어 상위 N개 (MyBatis, 2026-11-08 추가) |
 
 재료 검색 예시:
 
@@ -140,6 +142,17 @@ LIMIT 20 OFFSET 0;
 
 ```sql
 UPDATE recipe SET like_count = like_count + 1 WHERE id = ?;
+```
+
+인기 재료 예시 (2026-11-08 추가). `(recipe_id, ingredient_id)` UNIQUE 때문에 한 레시피에 같은 재료가 두 번 연결되지 않으므로 `COUNT(*)`가 곧 레시피 수다. `(ingredient_id, recipe_id)` 인덱스로 묶을 수 있는지 실행 계획(`EXPLAIN`)으로 확인한다.
+
+```sql
+SELECT i.name, COUNT(*) AS recipe_count
+FROM recipe_ingredient ri
+JOIN ingredient i ON i.id = ri.ingredient_id
+GROUP BY i.id, i.name
+ORDER BY recipe_count DESC, i.name ASC
+LIMIT 10;
 ```
 
 ## Redis 저장 데이터 (테이블 아님)
