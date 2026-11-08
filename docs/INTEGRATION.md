@@ -1,6 +1,7 @@
 # 프론트-백엔드 연동 (MVP)
 
 > 기준일: 2026-10-02 · 상태: 초안 (구현 전)
+> 2026-11-08 판정: 로그인 실패 잠금(429 `LOGIN_TOO_MANY_ATTEMPTS`, `login-fail`), Redis 장애 시 503, Refresh 재발급 Lua 원자화, `ErrorCodeSpecTest`는 **MVP 이후로 미뤘다**(ROADMAP "MVP 이후 (미룬 항목)"). 이 문서의 해당 설계는 나중에 구현할 목표로 남겨 두며, MVP에서는 구현하지 않는다.
 > 읽는 때: Vue와 Spring Boot를 연결할 때, 로그인·에러·이미지 처리를 구현할 때
 
 Vue(프론트)와 Spring Boot(백엔드)가 어떻게 연결되는지 정한다. API 경로·형식 자체는 `API_SPEC.md`가 기준이다.

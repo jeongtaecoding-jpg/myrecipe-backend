@@ -14,6 +14,7 @@ info:
     - 명세에 없는 요청 필드는 400 INVALID_INPUT으로 거부한다.
     - Redis/S3 장애 시 해당 기능(로그인·재발급·로그아웃 / 사진 업로드·레시피 저장)만 503 SERVICE_UNAVAILABLE.
     - 모든 응답에 X-Request-Id 헤더가 붙는다.
+    - (2026-11-08) 로그인 실패 잠금(429)과 Redis 장애 503은 MVP 이후로 미뤘다. 설계는 남겨 둔다(ROADMAP "MVP 이후").
 servers:
   - url: http://localhost:8080
     description: 로컬 개발 서버
@@ -243,6 +244,33 @@ paths:
                 $ref: '#/components/schemas/RecipePage'
         '401':
           $ref: '#/components/responses/TokenError'
+
+  /api/recipes/popular-ingredients:
+    get:
+      tags: [레시피]
+      summary: 인기 재료 TOP N
+      description: 레시피에 많이 쓰인 재료를 레시피 수가 많은 순(같으면 이름순)으로 반환한다. 페이지 형식이 아닌 배열. 쓰인 레시피가 없는 재료는 제외. (2026-11-08 추가)
+      operationId: getPopularIngredients
+      parameters:
+        - name: size
+          in: query
+          required: false
+          description: 개수. 기본 10, 최대 20(넘으면 20으로 줄임)
+          schema:
+            type: integer
+            minimum: 1
+            default: 10
+      responses:
+        '200':
+          description: 조회 성공
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PopularIngredientResponse'
+        '400':
+          $ref: '#/components/responses/InvalidInput'
 
   /api/recipes/{recipeId}:
     parameters:
@@ -750,6 +778,16 @@ components:
         nickname:
           type: string
           example: 두부요리사
+    PopularIngredientResponse:
+      type: object
+      properties:
+        name:
+          type: string
+          example: 두부
+        recipeCount:
+          type: integer
+          format: int64
+          example: 12
     IngredientResponse:
       type: object
       properties:
