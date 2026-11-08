@@ -125,6 +125,23 @@ HELP.md
 - 컨테이너의 기본 시간대는 UTC다. docker-compose의 `app`에 `TZ: Asia/Seoul`을 넣어 개발 모드와 `createdAt` 시간이 같게 한다.
 - 베이스 이미지는 프로젝트의 Java 21과 같은 버전인 `eclipse-temurin:21`(빌드 `21-jdk`, 실행 `21-jre`)을 쓴다. `java:21`이나 `openjdk:21`은 공식 이미지가 중단·deprecated라서 쓰지 않는다. 태그는 구현할 때 확정하고 고정한다.
 
+### 운영(prod) 프로필 값과 시드 데이터
+
+| 설정 | local (기본 yaml) | prod (`application-prod.yaml`) |
+|---|---|---|
+| `spring.jpa.hibernate.ddl-auto` | `validate` (Flyway 도입 전까지 `update`) | `validate` |
+| `show-sql` / `format_sql` | `true` / `true` | `false` / `false` |
+| `server.error.include-stacktrace`, `include-message` | `never`, `never` (에러 형식은 `ErrorResponse`로 통일하므로 로컬도 숨김) | `never`, `never` |
+| Swagger UI | 켬 | 끔 (`springdoc.swagger-ui.enabled: false`, `api-docs.enabled: false`) |
+| 로그 레벨 | root `info`, 앱 패키지 `debug` | root `warn`, 앱 패키지 `info` (너무 낮추면 시작·장애 로그가 사라진다) |
+| 로그 출력 | 콘솔 | **콘솔(stdout)만.** 컨테이너 환경은 파일이 아니라 `docker logs`로 본다 |
+| Hikari | 기본값 | `maximum-pool-size: 10`, `connection-timeout: 30000` |
+| 쿠키 `Secure` | `false` | `true` (`COOKIE_SECURE`) |
+| 시간대 | `Asia/Seoul` | `Asia/Seoul` (컨테이너는 `TZ` 환경 변수) |
+
+- `application.yaml`에는 DB 비밀번호·JWT 비밀 키의 **기본값을 넣지 않는다.** 없으면 시작 시 실패하는 편이 안전하다(`${DB_PASSWORD}`처럼 기본값 없이 참조).
+- **시드 데이터(local 전용)**: 검색·페이징을 눈으로 확인할 수 있게 재료 20여 개와 레시피 30여 개를 넣는 SQL을 `src/main/resources/db/seed/`에 둔다. `local` 프로필에서만 Flyway가 이 폴더를 함께 읽게 하고(`spring.flyway.locations`), `prod`·테스트에서는 읽지 않는다. Flyway 도입 전(`ddl-auto: update` 시기)에는 만들지 않는다. 시드의 회원 비밀번호는 BCrypt 해시로 넣는다.
+
 ### 프록시로 연결 (CORS 없이)
 
 브라우저 입장에서 5173과 8080은 다른 출처(origin)라서 그대로 호출하면 CORS 에러가 난다. 개발 중에는 **Vite 프록시**로 `/api` 요청을 8080으로 넘겨 같은 출처처럼 보이게 한다. 사진은 브라우저가 AWS S3·CloudFront와 직접 주고받으므로 프록시하지 않는다([4. 이미지](#4-이미지-업로드와-표시)).
@@ -159,10 +176,11 @@ export default defineConfig({
 | `JWT_SECRET` | JWT 서명 키 (충분히 긴 임의 문자열) |
 | `JWT_ACCESS_EXPIRATION_SECONDS` | Access Token 유효 시간, 기본 1800 (30분) |
 | `JWT_REFRESH_EXPIRATION_SECONDS` | Refresh Token 유효 시간·Redis TTL, 기본 1209600 (14일) |
+| `SPRING_PROFILES_ACTIVE` | 실행 프로필. 비우면 `local`(기본 yaml), 배포는 `prod`(`application-prod.yaml`: `ddl-auto` 끔, SQL 로그 끔, Swagger 끔, 스택 트레이스 숨김) |
 | `COOKIE_SECURE` | 쿠키 `Secure` 여부. 로컬(http)은 `false`, HTTPS 배포는 `true` |
 | `STORAGE_REGION` | S3 리전. `ap-northeast-2`(서울) |
 | `STORAGE_BUCKET` | S3 버킷 이름. 전 세계에서 하나뿐이어야 한다(예: `myrecipe-images-본인아이디`) |
-| `STORAGE_PUBLIC_URL` | 사진을 보여줄 CloudFront 주소. 공개 URL을 만들 때 씀 |
+| `STORAGE_PUBLIC_URL` | 사진을 보여줄 CloudFront 주소. 공개 URL을 만들 때 씀. **끝에 `/`를 붙이지 않는다**(코드는 `{주소}/{키}`로 붙임) |
 | `STORAGE_ACCESS_KEY`, `STORAGE_SECRET_KEY` | 앱 전용 IAM 사용자의 접속 키 (버킷의 `recipes/` 아래 객체 읽기·쓰기·삭제만 가능) |
 
 ## 2. 인증 연동
@@ -218,7 +236,7 @@ http.interceptors.response.use(
     const auth = useAuthStore()
 
     // Access Token 만료: 재발급 후 원래 요청을 한 번만 다시 보낸다
-    if (response?.data?.code === 'TOKEN_EXPIRED' && !config._retried) {
+    if (response?.data?.code === 'TOKEN_EXPIRED' && !config._retried && !config.url?.startsWith('/auth/')) {
       config._retried = true
       try {
         refreshing ??= auth.refresh().finally(() => { refreshing = null }) // POST /api/auth/refresh
@@ -230,7 +248,9 @@ http.interceptors.response.use(
     }
 
     // 그 밖의 401(재발급 실패 포함): 로그아웃 상태로 만들고, 로그인이 필요한 화면이면 로그인으로
-    if (response?.status === 401) {
+    // 단, 로그인·재발급·로그아웃 요청 자체의 401은 여기서 처리하지 않는다(로그인 실패 문구는 화면이 보여 줌)
+    const isAuthCall = config?.url?.startsWith('/auth/')
+    if (response?.status === 401 && !isAuthCall) {
       auth.clear()
       if (router.currentRoute.value.meta.requiresAuth) {
         router.push({ name: 'login', query: { redirect: router.currentRoute.value.fullPath } })
@@ -309,7 +329,7 @@ Spring의 `ResponseCookie`로 만든다.
 - 로그인: 저장(덮어쓰기). 재발급: 해시 비교 후 새 값으로 저장. 로그아웃: 삭제.
 - **로그인 시도 제한**: 같은 이메일로 로그인이 5번 실패하면 15분 동안 그 이메일의 로그인을 막는다(429 `LOGIN_TOO_MANY_ATTEMPTS`). 키 `login-fail:{email}`에 실패 횟수를 `INCR`로 올리고, 첫 실패 때 TTL 15분을 건다. 막힌 동안은 비밀번호를 확인하지 않고 바로 거부한다. 로그인에 성공하면 키를 지운다. 비밀번호를 무작위로 계속 넣어 보는 공격(무차별 대입)을 막는다.
   - 한계: 다른 사람이 내 이메일로 일부러 5번 틀리면 나도 15분간 로그인하지 못한다. 기간을 짧게 두어 피해를 줄이고, MVP에서는 받아들인다.
-- Redis가 꺼져 있으면 로그인·재발급이 실패한다. 이때는 500 `INTERNAL_ERROR`로 응답하고 원인은 로그에 남긴다. Access Token이 살아 있는 동안 일반 API는 Redis 없이 동작한다.
+- Redis가 꺼져 있으면 로그인·재발급·로그아웃이 실패한다. 이때는 `503 SERVICE_UNAVAILABLE`로 응답하고 원인은 로그에 남긴다(Redis 연결 예외를 잡아 변환). Access Token이 살아 있는 동안 일반 API는 Redis 없이 동작한다. 로그인 실패 횟수를 확인하지 못하는 경우에도 **로그인을 허용하지 않고** 같은 503으로 응답한다(잠금 우회 방지).
 
 **JWT 필터 동작**
 - **`/api/auth/`로 시작하는 요청은 검사하지 않는다** (`OncePerRequestFilter`의 `shouldNotFilter`). 로그인은 이메일·비밀번호, 재발급·로그아웃은 쿠키의 Refresh Token으로 판단하므로 Access Token은 의미가 없다. 검사하면 만료된 Access Token 때문에 로그아웃 요청이 막히고, 로그아웃하려다 토큰이 새로 발급되는 일이 생긴다.
@@ -341,8 +361,15 @@ Spring Security 필터에서 난 예외는 컨트롤러 밖에서 일어나서 `
 | 400 `INVALID_INPUT` | `fieldErrors`를 해당 입력칸 아래에 표시 |
 | 401 | 인터셉터가 처리. `TOKEN_EXPIRED`면 재발급 후 재시도, 그 밖의 401은 로그아웃 상태로 만들고 필요하면 로그인 화면으로 |
 | 403, 404, 409 | `message`를 알림으로 표시. 404면 목록 화면으로 이동 |
+| 503 `SERVICE_UNAVAILABLE` | **로그아웃시키지 않는다.** "잠시 후 다시 시도해 주세요." 알림. GET은 1번만 자동 재시도 |
 | 500, 응답 없음(네트워크 오류) | "잠시 후 다시 시도해 주세요." 공통 알림 |
 
+- 인터셉터의 401 처리 대상에서 `login`, `refresh`, `logout` 요청은 제외한다(로그인 실패 401로 재발급을 시도하는 루프 방지). 재발급은 동시에 한 번만 보내고 나머지 요청은 그 결과를 기다린다(single-flight; 이미 쓰는 Web Locks와 함께).
+- 403은 세션을 유지한다(권한이 없을 뿐 로그인은 유효). 로그아웃시키는 건 재발급까지 실패한 401뿐이다.
+- 검색처럼 연속 요청이 겹치면 `AbortController`로 이전 요청을 취소하거나 요청 순번으로 늦게 온 옛 응답을 버린다.
+- 버튼은 요청 중 비활성화해 중복 제출을 막고, 화면마다 로딩·에러 상태를 둔다.
+- 라우트는 동적 import(`() => import(...)`)로 나누고, 배포 직후 청크 로딩 실패는 1번 새로고침한다.
+- 환경 변수는 `VITE_` 접두사만 노출된다. API 주소는 `import.meta.env.VITE_API_BASE_URL || '/api'`.
 - 프론트에서도 같은 입력 규칙(길이 등)을 먼저 검사해 바로 알려준다. 단, 최종 검증은 서버가 한다.
 - 레시피·댓글처럼 사용자가 쓴 글은 항상 `{{ }}`로 출력한다. `v-html`을 쓰지 않는다(XSS). Access Token이 메모리에 있어도 XSS가 나면 읽힐 수 있으므로 이 규칙이 토큰 보호의 전제다.
 - 화면 문구를 `code`별로 바꾸고 싶으면 프론트에 `code → 문구` 표를 두고, 없으면 서버 `message`를 쓴다.
@@ -425,12 +452,13 @@ previewUrl.value = data.imageUrl
 **라이브러리**: AWS SDK for Java v2의 S3 클라이언트와 S3Presigner. 처음부터 저장소 전용 SDK 대신 이 SDK로 설계해서, 저장소를 MinIO에서 AWS S3로 바꿀 때도 앱 코드는 바뀌지 않았다.
 
 - S3 클라이언트·Presigner: 리전 `STORAGE_REGION`, 접속 키 `STORAGE_ACCESS_KEY`/`STORAGE_SECRET_KEY`. 주소(endpoint)는 지정하지 않는다(SDK가 리전으로 결정).
+- S3 클라이언트 타임아웃: 연결 2초, 요청 1회 시도 5초, 전체 10초. 초과하면 `503 SERVICE_UNAVAILABLE`(업로드 URL 발급은 네트워크 호출이 없으므로 서명 오류만 해당).
 - 관련 코드는 `global/storage`의 `StorageService` 한 곳에 모은다. 테스트·CI에서는 AWS에 접속하지 않도록 `StorageService`를 가짜 구현(테스트 더블)으로 바꿔 끼운다.
 
 | 기능 | 처리 |
 |---|---|
 | Presigned URL 발급 | 형식(`image/jpeg`, `image/png`, `image/webp`)·크기(5MB) 확인 → 키 `recipes/{memberId}/{yyyy}/{MM}/{dd}/{UUID}.{확장자}` 생성 → `contentType`을 넣어 5분짜리 PUT URL 서명 |
-| 레시피 저장 시 확인 | 키가 `recipes/{로그인 memberId}/`로 시작하는지 → 객체 정보 조회(HeadObject)로 존재·실제 크기·Content-Type 확인 → 파일 앞 12바이트만 읽어(Range GET) 실제 이미지 형식인지 확인(JPEG `FF D8 FF`, PNG `89 50 4E 47`, WebP `RIFF....WEBP`) → 아니면 `IMAGE_NOT_FOUND` / `IMAGE_TOO_LARGE` / `IMAGE_INVALID_TYPE` |
+| 레시피 저장 시 확인 | (이 레시피가 이미 쓰는 키는 건너뜀) 키가 `recipes/{로그인 memberId}/`로 시작하는지 → 객체 정보 조회(HeadObject)로 존재·실제 크기·Content-Type 확인 → 파일 앞 12바이트만 읽어(Range GET) 실제 이미지 형식인지 확인(JPEG `FF D8 FF`, PNG `89 50 4E 47`, WebP `RIFF....WEBP`) → 아니면 `IMAGE_NOT_FOUND` / `IMAGE_TOO_LARGE` / `IMAGE_INVALID_TYPE` |
 | 공개 URL 만들기 | 응답 DTO를 만들 때 `STORAGE_PUBLIC_URL + "/" + 키` (CloudFront 주소). DB에는 키만 저장 |
 | 사진 삭제 | 레시피 삭제·사진 교체 시, DB 트랜잭션이 **커밋된 뒤** 삭제(`@TransactionalEventListener(phase = AFTER_COMMIT)`). 실패하면 로그만 남김 |
 
@@ -440,6 +468,9 @@ previewUrl.value = data.imageUrl
 - CloudFront는 사진을 캐시하므로, S3에서 지운 사진이 CloudFront 주소로 한동안(기본 최대 24시간) 더 보일 수 있다. 키에 UUID를 써서 같은 주소를 재사용하지 않으므로 MVP에서는 문제없다.
 - Presigned URL은 서명이 들어 있으므로 로그에 남기지 않는다.
 
+- 사진 개수만큼 S3 호출이 늘어난다(최대 31장 × 2회). MVP에서는 순차 처리로 두고, 새로 올린 키만 확인하므로 수정 때는 보통 몇 번 안 된다. 느려지면 병렬화를 검토한다.
+- **업로드 남용**: 로그인한 회원이면 Presigned URL을 횟수 제한 없이 받을 수 있다. 예산 알림과 5MB 제한으로 피해를 줄이고, MVP에서는 회원별 한도를 두지 않는다(받아들인 위험).
+
 ## 5. 데이터 형식 약속
 
 | 항목 | 약속 |
@@ -448,6 +479,8 @@ previewUrl.value = data.imageUrl
 | 페이지 | 요청 `page`(0부터), `size`. 응답의 `hasNext`로 "더 보기" 버튼 표시 여부 결정 |
 | 빈 값 | 값이 없으면 `null`로 보낸다. 빈 문자열(`""`)과 섞지 않는다 |
 | 검색어 | 재료 검색어는 앞뒤 공백을 지워 보낸다. 서버도 한 번 더 지운다 |
+| 이메일 | 서버가 소문자로 바꿔 저장·비교한다. 프론트는 입력한 그대로 보내도 된다 |
+| 수정 화면의 사진 | 바꾸지 않은 사진은 상세 응답의 `thumbnailKey`, `steps[].imageKey`를 그대로 다시 보낸다 |
 
 ## 6. 화면과 API 연결
 
@@ -497,3 +530,8 @@ previewUrl.value = data.imageUrl
 - [ ] 텍스트 파일 확장자를 `.jpg`로 바꿔 업로드 → 레시피 저장 시 `IMAGE_INVALID_TYPE`
 - [ ] 없는 API 호출·잘못된 JSON 본문 → 401이 아니라 원래 에러(404·400), 응답에 스택 트레이스 없음
 - [ ] 레시피 제목·댓글에 `<script>alert(1)</script>` 입력 → 글자 그대로 보이고 실행되지 않음
+- [ ] 같은 사진 키를 다른 레시피(또는 같은 요청의 다른 칸)에 쓰면 `IMAGE_ALREADY_USED`
+- [ ] 수정 화면에서 사진을 바꾸지 않고 저장 → 사진이 유지되고 S3 객체도 그대로. 사진을 바꾸면 예전 객체만 삭제됨
+- [ ] `Test@Example.com`으로 가입 후 `test@example.com`으로 로그인 가능, 같은 이메일로 다시 가입 → 409
+- [ ] Redis 컨테이너를 멈추고 로그인·재발급 → 503, 레시피 목록 조회는 정상, 프론트는 로그아웃되지 않음
+

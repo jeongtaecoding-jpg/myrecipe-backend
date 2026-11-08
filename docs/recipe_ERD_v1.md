@@ -88,12 +88,12 @@ erDiagram
 | recipe | member\_id | BIGINT FK → member | NOT NULL, 작성자 |
 | recipe | title | VARCHAR(100) | NOT NULL |
 | recipe | description | TEXT | 소개글, NULL 허용 |
-| recipe | thumbnail\_key | VARCHAR(300) | 대표 사진의 S3 객체 키, NULL 허용 |
+| recipe | thumbnail\_key | VARCHAR(300) | 대표 사진의 S3 객체 키, NULL 허용. UNIQUE (`uk_recipe_thumbnail_key`, NULL은 여러 개 가능) |
 | recipe | like\_count | INT | NOT NULL, 기본 0 |
 | recipe\_step | recipe\_id | BIGINT FK → recipe | NOT NULL |
 | recipe\_step | step\_order | INT | NOT NULL, 1부터. (recipe\_id, step\_order) UNIQUE |
 | recipe\_step | content | TEXT | NOT NULL, 조리 설명 |
-| recipe\_step | image\_key | VARCHAR(300) | 단계 사진의 S3 객체 키, NULL 허용 |
+| recipe\_step | image\_key | VARCHAR(300) | 단계 사진의 S3 객체 키, NULL 허용. UNIQUE (`uk_recipe_step_image_key`) |
 
 ### 재료
 
@@ -101,7 +101,7 @@ erDiagram
 | --- | --- | --- | --- |
 | ingredient | name | VARCHAR(50) | NOT NULL, UNIQUE (두부, 대파…) |
 | recipe\_ingredient | recipe\_id | BIGINT FK → recipe | NOT NULL. (recipe\_id, ingredient\_id) UNIQUE |
-| recipe\_ingredient | ingredient\_id | BIGINT FK → ingredient | NOT NULL, INDEX (재료 검색용) |
+| recipe\_ingredient | ingredient\_id | BIGINT FK → ingredient | NOT NULL. (ingredient\_id, recipe\_id) 복합 INDEX (재료 검색용: 재료로 레시피 id를 찾을 때 테이블 접근 없이 인덱스만으로 처리) |
 | recipe\_ingredient | amount | VARCHAR(30) | "1모", "2큰술", "약간". NULL 허용 |
 | recipe\_ingredient | sort\_order | INT | NOT NULL, 화면 표시 순서 |
 
@@ -111,7 +111,7 @@ erDiagram
 | --- | --- | --- | --- |
 | recipe\_like | member\_id | BIGINT FK → member | NOT NULL. (member\_id, recipe\_id) UNIQUE → 중복 좋아요 방지 |
 | recipe\_like | recipe\_id | BIGINT FK → recipe | NOT NULL |
-| comment | recipe\_id | BIGINT FK → recipe | NOT NULL, INDEX (레시피별 댓글 목록) |
+| comment | recipe\_id | BIGINT FK → recipe | NOT NULL. (recipe\_id, created\_at) 복합 INDEX (레시피별 댓글 목록 + 정렬) |
 | comment | member\_id | BIGINT FK → member | NOT NULL |
 | comment | content | VARCHAR(500) | NOT NULL |
 
@@ -132,7 +132,7 @@ FROM recipe r
 JOIN recipe_ingredient ri ON ri.recipe_id = r.id
 JOIN ingredient i ON i.id = ri.ingredient_id
 WHERE i.name = '두부'
-ORDER BY r.created_at DESC
+ORDER BY r.created_at DESC, r.id DESC
 LIMIT 20 OFFSET 0;
 ```
 
@@ -167,3 +167,18 @@ Refresh Token과 로그인 실패 횟수는 MySQL이 아니라 Redis에 저장�
 - 키에 회원 ID를 넣어, 레시피 저장 시 "내가 발급받은 키인지"를 확인한다.
 - 원래 파일 이름은 쓰지 않는다(중복·이상한 문자 방지).
 - 레시피 삭제·사진 교체 시 DB 작업이 끝난 뒤 객체를 지운다. 레시피에 쓰이지 않은 객체(업로드만 하고 저장 안 함, 삭제 실패)는 MVP에서 정리하지 않는다.
+
+## 인덱스·제약 이름 규칙 (2026-11-06 추가)
+
+- 목록은 `ORDER BY created_at DESC, id DESC`로 정렬하므로 `recipe(created_at)`에 INDEX를 둔다.
+- UNIQUE·INDEX에는 이름을 붙인다: `uk_member_email`, `uk_member_nickname`, `uk_ingredient_name`, `uk_recipe_ingredient`, `uk_recipe_like`, `uk_recipe_thumbnail_key`, `uk_recipe_step_image_key`, `idx_recipe_created_at`, `idx_comment_recipe_created`. 동시 요청으로 UNIQUE 위반이 났을 때 **어느 제약인지 이름으로 구분**해 `EMAIL_DUPLICATED`/`NICKNAME_DUPLICATED`/`LIKE_ALREADY_EXISTS`로 바꾸기 위해서다. (MySQL이 알려 주는 제약 이름 형식은 통합 테스트로 확인한다)
+- 스키마는 2단계 시작 전에 Flyway로 관리한다(`V1__init.sql`을 이 ERD로 작성, `ddl-auto: validate`). 그 전까지의 `update`는 학습용 임시 설정이다.
+
+## 문자셋·정렬 규칙과 저장 규칙 (2026-11-06 추가)
+
+- **문자셋/정렬**: DB·테이블 모두 `utf8mb4` / `utf8mb4_0900_ai_ci`(MySQL 8.4 기본값). 이 정렬은 **대소문자·악센트를 구분하지 않으므로** `UNIQUE`(email, nickname, ingredient.name)와 `WHERE name = ?` 비교도 구분하지 않는다("Tofu"="tofu"). 의도한 동작이다. 한글 비교는 정확히 일치하는 글자만 같다("달걀"≠"계란").
+- **사진 키 유일성**: 한 키는 `recipe.thumbnail_key`와 `recipe_step.image_key`를 통틀어 한 곳에만 쓴다(레시피를 지울 때 다른 레시피의 사진이 지워지는 사고 방지). 두 컬럼의 UNIQUE는 각 테이블 안에서만 막으므로, 테이블 사이의 중복(대표 사진 ↔ 단계 사진)은 서비스가 확인해 `IMAGE_ALREADY_USED`로 거부한다.
+- **재료 get-or-create 동시성**: 같은 새 재료를 두 요청이 동시에 만들면 `uk_ingredient_name` 위반이 난다. 위반을 잡아서 다시 조회하는 방식은 트랜잭션이 망가지므로 쓰지 않고, `INSERT IGNORE INTO ingredient (name, created_at, updated_at) VALUES (?, ?, ?)`(네이티브 쿼리) 후 `findByName`으로 읽는다. 이미 있으면 무시되고, 없으면 만들어진다.
+- 레시피 삭제 시 자식 지우는 순서: 좋아요·댓글(이벤트 리스너) → `recipe_ingredient` → `recipe_step` → `recipe`. 재료(`ingredient`)는 지우지 않는다.
+- 댓글 목록 정렬은 `created_at ASC, id ASC`(오래된 순).
+

@@ -36,7 +36,7 @@
 | Docker | MySQL + Redis + Spring Boot를 docker-compose로 실행. Spring Boot는 멀티 스테이지 Dockerfile로 이미지화, 컨테이너 간 서비스 이름 통신, named volume으로 데이터 유지 |
 | CI/CD | GitHub Actions로 테스트·빌드, Docker 이미지 빌드 확인 자동화 |
 
-Kafka, API Gateway, Kubernetes는 서비스가 여러 개일 때 의미가 있어 MVP에는 넣지 않는다. 확장 과제는 [7. 이후 확장 과제](#7-이후-확장-과제)에 둔다.
+**이 프로젝트는 단일 앱(v1)만 만든다.** MSA(서비스 분리), Kafka, API Gateway, Kubernetes는 하지 않는다. 선택 확장 과제는 [7. 선택 확장 과제](#7-선택-확장-과제-v1-범위-안)에 둔다.
 
 ### 품질 속성
 
@@ -51,6 +51,7 @@ Kafka, API Gateway, Kubernetes는 서비스가 여러 개일 때 의미가 있�
 | QA7 | 보안(업로드) | 다른 회원이 발급받은 사진 키, 업로드하지 않은 키, 5MB를 넘거나 이미지가 아닌 파일(확장자·Content-Type만 이미지로 위장한 파일 포함)로 레시피를 저장하려 한다 | 레시피 저장 거부(400). Presigned URL은 5분 뒤 무효 |
 | QA8 | 보안(로그인) | 한 이메일에 비밀번호를 계속 바꿔 가며 로그인을 시도한다 | 5번 실패 후 15분간 429. 존재하지 않는 이메일과 틀린 비밀번호는 응답 내용·시간으로 구분되지 않음 |
 | QA9 | 보안(토큰) | Refresh Token을 Access Token 자리에 넣어 API를 호출한다 | 401. 토큰 종류(`type`)가 다르면 거부 |
+| QA10 | 가용성 | Redis 또는 S3가 내려간다 | Redis 장애 시 로그인·재발급·로그아웃만 503, 나머지 API 정상. S3 장애 시 사진 업로드·레시피 저장만 503. 프론트는 503에서 로그아웃시키지 않음 |
 
 ### 제약사항
 
@@ -62,7 +63,7 @@ Kafka, API Gateway, Kubernetes는 서비스가 여러 개일 때 의미가 있�
 
 | 결정 | 선택 | 이유 | 근거 |
 |---|---|---|---|
-| 서버 구조 | Spring Boot 서버 1개, 도메인별 패키지 | 기능이 작고 학습 목적. 서비스 분리는 확장 과제로 | C1, C3 |
+| 서버 구조 | Spring Boot 서버 1개, 도메인별 패키지 | 기능이 작고 학습 목적. 서비스 분리(MSA)는 하지 않는다 | C1, C3 |
 | 인증 | Spring Security + JWT. Access Token(30분, 응답 본문으로 전달, 프론트 메모리에 보관) + Refresh Token(14일, httpOnly 쿠키) | Access Token은 짧게 두어 탈취 피해를 줄이고, Refresh Token으로 로그인 상태를 유지. 오래 사는 Refresh Token은 자바스크립트가 읽을 수 없는 쿠키에 둠 | QA1, QA5, QA6 |
 | Refresh Token 저장 | Redis에 회원별 1개, TTL = 토큰 유효 기간, 재발급 때마다 새 토큰으로 교체(로테이션) | 아래 "Redis를 쓰는 이유" 참고 | QA5, QA6 |
 | 재료 저장 | 재료 테이블을 따로 두고 레시피와 다대다 연결. 등록 시 같은 이름이 있으면 재사용, 없으면 생성 | 재료로 검색하려면 재료가 텍스트가 아니라 행이어야 함 | F4, QA4 |
@@ -70,7 +71,7 @@ Kafka, API Gateway, Kubernetes는 서비스가 여러 개일 때 의미가 있�
 | 좋아요 수 | `recipe.like_count` 컬럼 + DB에서 원자적 증감, `(member_id, recipe_id)` UNIQUE | 중복 방지와 동시성 학습 | QA2 |
 | 사진 저장 | AWS S3 버킷(서울 리전, 비공개). 업로드는 서버가 발급한 Presigned URL로 브라우저가 직접, 보기는 CloudFront URL. DB에는 객체 키만 | 아래 "AWS S3를 쓰는 이유" 참고 | QA7 |
 | 목록 조회 | 페이징 + 필요한 연관만 fetch join | N+1 학습 | QA3 |
-| 모듈 간 의존 | 한 방향만 허용(like·comment → recipe). recipe 삭제는 이벤트로 알리고, 여러 모듈을 모으는 상세 조회는 `facade`가 조립 | 순환 참조를 막고, 나중에 서비스 분리·Kafka 이벤트로 이어지게 | C3, 7장 |
+| 모듈 간 의존 | 한 방향만 허용(like·comment → recipe). recipe 삭제는 이벤트로 알리고, 여러 모듈을 모으는 상세 조회는 `facade`가 조립 | 순환 참조를 막고 모듈 경계를 분명히 하기 위해 | C3 |
 
 ### Redis를 쓰는 이유
 
@@ -98,6 +99,12 @@ JWT는 서버가 따로 기록하지 않으면, 한번 발급한 토큰을 만�
 - 비밀번호(`requirepass`)를 설정한다.
 - 외부에서 접속할 수 없게 한다. 포트는 `127.0.0.1`에만 열고, Spring Boot 컨테이너는 docker-compose 내부 네트워크에서 서비스 이름(`redis`)으로 접근한다.
 - 토큰 원문 대신 해시(SHA-256)를 저장해, Redis 내용이 유출돼도 바로 쓸 수 없게 한다.
+
+**재발급은 원자적으로 (2026-11-06 결정, LMS v2 방식).** "저장된 해시와 비교 → 같으면 새 해시로 교체 + TTL 갱신"을 Redis Lua 스크립트 한 번으로 처리한다(`RefreshTokenRepository.rotate`). 결과는 1(교체 성공) / 0(불일치 → 재사용으로 보고 키 삭제) / -1(키 없음). 읽고 나서 쓰는 두 단계로 나누면 같은 토큰으로 동시에 온 요청 둘이 모두 성공할 수 있기 때문이다.
+
+**Redis 운영 설정**: AOF(`appendonly yes`, `appendfsync everysec`)로 재시작 시 토큰·잠금 정보를 보존하고, `maxmemory-policy noeviction`으로 메모리가 차도 키를 임의로 지우지 않는다(대신 쓰기 실패 → 503). 접속·명령 타임아웃은 2초.
+
+**장애 영향**: Redis가 내려가면 로그인·재발급·로그아웃만 503이고, Access Token만 검사하는 나머지 API는 그대로 동작한다(`API_SPEC.md` "장애 시 동작").
 
 **MVP 한계** (받아들인 위험): 회원별로 토큰을 1개만 저장하므로, 다른 기기에서 로그인하면 이전 기기는 다음 재발급 때 로그아웃된다. 로그아웃해도 이미 발급된 Access Token은 만료(최대 30분)까지 유효하다. 두 가지 모두 확장 과제로 둔다.
 
@@ -143,7 +150,7 @@ JWT는 서버가 따로 기록하지 않으면, 한번 발급한 토큰을 만�
 - 버킷 CORS는 프론트 출처(`http://localhost:5173`)와 `PUT`만 허용한다.
 - AWS 계정은 root MFA, 예산 알림을 먼저 설정하고, 키는 `.env`에만 둔다(`INTEGRATION.md` 4장).
 
-**MVP 한계**: 업로드만 하고 레시피에 쓰지 않은 사진, 삭제에 실패한 사진이 버킷에 남을 수 있다. 정리는 확장 과제로 둔다.
+**MVP 한계**: 업로드만 하고 레시피에 쓰지 않은 사진, 삭제에 실패한 사진이 버킷에 남을 수 있다. 정리는 확장 과제로 둔다. 회원별 업로드 횟수 제한도 두지 않는다(예산 알림과 5MB 제한으로 피해를 줄임).
 
 ## 4. 구성
 
@@ -185,7 +192,7 @@ flowchart LR
 - 여러 모듈의 데이터를 합친 응답은 `facade`가 각 Service를 불러 조립한다. 도메인의 Service·Repository·Entity는 facade를 모르고, Controller만 facade를 호출한다.
 - 다른 모듈의 Repository를 직접 쓰지 않고 Service를 통해서만 접근한다. API 경로와 요청·응답 형식은 `API_SPEC.md`를 따른다.
 
-이 구조는 서비스를 나눌 때 그대로 이어진다. `RecipeDeletedEvent`는 Kafka 메시지로, facade는 API 조합 계층으로 바뀐다(7장).
+이 구조는 모듈 경계를 지키는 용도다. 서비스를 나누지는 않는다.
 
 ## 5. 핵심 흐름
 
@@ -205,8 +212,8 @@ flowchart LR
 1. 프론트가 사진마다 `POST /api/images/presigned-url`로 업로드 URL과 객체 키를 받음 (서버가 형식·크기 확인, 키에 회원 ID 포함)
 2. 프론트가 그 URL로 S3에 사진을 직접 `PUT`
 3. 레시피 정보(제목, 설명, 사진 객체 키, 재료 목록, 조리 순서)를 JSON으로 받음
-4. 사진 키마다 확인: 내 회원 ID로 시작하는지, S3에 객체가 있는지, 실제 형식·크기가 맞는지 (아니면 400)
-5. 재료마다 이름을 다듬어(앞뒤 공백 제거) `ingredient`에서 찾고, 없으면 생성
+4. 사진 키마다 확인: 요청 안에서 겹치지 않고 다른 레시피가 쓰지 않는지(`IMAGE_ALREADY_USED`), 내 회원 ID로 시작하는지, S3에 객체가 있는지, 실제 형식·크기가 맞는지 (아니면 400). 수정 때는 이 레시피가 이미 쓰는 키는 건너뜀
+5. 재료마다 이름을 다듬어(앞뒤 공백 제거) `INSERT IGNORE` 후 조회로 찾거나 생성(동시 요청에도 안전)
 6. 한 트랜잭션에서 `recipe`, `recipe_ingredient`, `recipe_step` 저장
 
 등록·수정 응답(레시피 상세 형식)은 저장이 끝난 뒤 facade가 상세 조회로 만든다.
@@ -251,16 +258,13 @@ facade가 recipe Service(레시피·재료·조리 순서), like Service(`likedB
 - CI: GitHub Actions에서 push·PR마다 테스트와 jar 빌드. Docker 이미지 빌드는 6단계에서 추가(레지스트리 푸시는 하지 않음)
 - 외부 배포(EC2 등)는 MVP 완성 후 선택
 
-## 7. 이후 확장 과제
+## 7. 선택 확장 과제 (v1 범위 안)
 
-MVP를 완성한 뒤 공부 중인 개념을 더 연습하고 싶을 때의 후보다. 지금 구현하지 않는다.
+MVP를 완성한 뒤 더 연습하고 싶을 때의 후보다. 지금 구현하지 않는다. 단일 앱 범위만 둔다(MSA·Kafka·Kubernetes는 하지 않음).
 
 | 과제 | 연습하는 개념 |
 |---|---|
-| member와 recipe를 별도 서비스로 분리하고 Spring Cloud Gateway로 라우팅·JWT 검증 | MSA, API Gateway |
-| 좋아요·댓글 발생을 Kafka 이벤트로 발행하고 다른 서비스(예: 알림)가 소비 | Kafka, 이벤트 기반 통신 |
-| 분리한 서비스를 Kubernetes에 배포 | Kubernetes |
-| GitHub Actions로 Docker 이미지를 레지스트리에 푸시하고 서버에 배포까지 자동화 | CI/CD |
+| GitHub Actions로 테스트 통과 후 Docker 이미지를 레지스트리(GHCR)에 푸시하고 서버에 배포까지 자동화 | CI/CD |
 | Vue도 Nginx 컨테이너로 만들어 정적 파일과 `/api` 프록시를 함께 처리 | Docker, Nginx |
 | 로그아웃한 Access Token을 남은 유효 시간만큼 Redis에 넣어 즉시 차단(블랙리스트) | Redis, 보안 |
 | 기기별 Refresh Token 저장(`refresh:{memberId}:{기기ID}`)으로 여러 기기 동시 로그인 | Redis, 인증 설계 |
@@ -268,3 +272,35 @@ MVP를 완성한 뒤 공부 중인 개념을 더 연습하고 싶을 때의 후�
 | 업로드된 사진의 썸네일 자동 생성 (S3 이벤트 → Lambda) | S3 이벤트, 서버리스 |
 | AWS 인프라(S3·CloudFront·IAM)를 Terraform 코드로 관리 | IaC |
 | 로컬 개발용 키 대신 IAM Identity Center(SSO) 임시 자격 증명 사용 | AWS 보안 |
+
+### 확장 과제 설계 메모 (구현 시 출발점)
+
+구현 시 출발점이다. 지금 만들지 않는다.
+
+**CI/CD (선택)**
+- main에 push → ① 테스트 통과 ② Docker 이미지 빌드 ③ GHCR에 푸시, 태그는 **커밋 SHA**(`latest` 금지). 테스트가 실패하면 이미지를 만들지 않는다. 배포 방식(서버에 `docker compose pull`)은 서버가 정해질 때 정한다.
+- 운영 환경의 설정은 일반 값과 비밀 값(DB 비밀번호, `JWT_SECRET`, 접속 키)을 나눠 관리한다. `.env.example`을 이 기준으로 나눈다.
+
+**Vue Nginx 컨테이너**
+- Node로 빌드한 `dist`를 `nginx:alpine`에 복사한다. SPA 새로고침을 위해 `try_files $uri $uri/ /index.html;`, 그리고 `/api/`는 백엔드로 프록시한다.
+
+```nginx
+server {
+    listen 80;
+    root /usr/share/nginx/html;
+    index index.html;
+
+    location /api/ {
+        proxy_pass http://app:8080;           # docker-compose 서비스 이름
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}
+```
+
+- 이렇게 하면 브라우저는 한 출처만 보므로 CORS와 `SameSite=Strict` 쿠키 문제가 없다(개발 때 Vite 프록시와 같은 구조).
+

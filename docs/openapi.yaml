@@ -11,6 +11,9 @@ info:
     - Refresh Token(14일)은 httpOnly 쿠키 `refresh_token`으로 받고, `/api/auth/refresh`로 Access Token을 재발급한다. 서버는 Refresh Token을 Redis에 저장한다.
     - 인증이 "선택"인 API는 토큰 없이 호출할 수 있고, 토큰이 있으면 내 정보(likedByMe 등)가 반영된다.
     - 토큰을 보냈는데 만료·위조면 인증 선택 API여도 401을 반환한다.
+    - 명세에 없는 요청 필드는 400 INVALID_INPUT으로 거부한다.
+    - Redis/S3 장애 시 해당 기능(로그인·재발급·로그아웃 / 사진 업로드·레시피 저장)만 503 SERVICE_UNAVAILABLE.
+    - 모든 응답에 X-Request-Id 헤더가 붙는다.
 servers:
   - url: http://localhost:8080
     description: 로컬 개발 서버
@@ -205,7 +208,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/RecipeDetailResponse'
         '400':
-          description: INVALID_INPUT, INGREDIENT_DUPLICATED, IMAGE_NOT_FOUND, IMAGE_INVALID_TYPE, IMAGE_TOO_LARGE
+          description: INVALID_INPUT, INGREDIENT_DUPLICATED, IMAGE_NOT_FOUND, IMAGE_INVALID_TYPE, IMAGE_TOO_LARGE, IMAGE_ALREADY_USED
           content:
             application/json:
               schema:
@@ -283,7 +286,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/RecipeDetailResponse'
         '400':
-          description: INVALID_INPUT, INGREDIENT_DUPLICATED, IMAGE_NOT_FOUND, IMAGE_INVALID_TYPE, IMAGE_TOO_LARGE
+          description: INVALID_INPUT, INGREDIENT_DUPLICATED, IMAGE_NOT_FOUND, IMAGE_INVALID_TYPE, IMAGE_TOO_LARGE, IMAGE_ALREADY_USED
           content:
             application/json:
               schema:
@@ -478,7 +481,7 @@ components:
       name: size
       in: query
       required: false
-      description: 페이지 크기
+      description: 페이지 크기. 50 초과는 50으로 줄여 처리, 1 미만은 INVALID_INPUT
       schema:
         type: integer
         minimum: 1
@@ -551,6 +554,7 @@ components:
             - IMAGE_INVALID_TYPE
             - IMAGE_TOO_LARGE
             - IMAGE_NOT_FOUND
+            - IMAGE_ALREADY_USED
             - INGREDIENT_DUPLICATED
             - RECIPE_NOT_FOUND
             - RECIPE_FORBIDDEN
@@ -558,6 +562,11 @@ components:
             - LIKE_NOT_FOUND
             - COMMENT_NOT_FOUND
             - COMMENT_FORBIDDEN
+            - FORBIDDEN
+            - NOT_FOUND
+            - METHOD_NOT_ALLOWED
+            - UNSUPPORTED_MEDIA_TYPE
+            - SERVICE_UNAVAILABLE
             - INTERNAL_ERROR
         message:
           type: string
@@ -763,6 +772,10 @@ components:
         imageUrl:
           type: string
           nullable: true
+        imageKey:
+          type: string
+          nullable: true
+          description: 수정 시 바꾸지 않는 사진을 그대로 다시 보내기 위한 S3 객체 키
     RecipeDetailResponse:
       type: object
       properties:
@@ -781,6 +794,11 @@ components:
           nullable: true
           description: CloudFront 공개 URL
           example: https://d1234example.cloudfront.net/recipes/1/2026/10/02/3f9c1a2e.jpg
+        thumbnailKey:
+          type: string
+          nullable: true
+          description: 수정 시 바꾸지 않는 사진을 그대로 다시 보내기 위한 S3 객체 키
+          example: recipes/1/2026/10/02/3f9c1a2e.jpg
         writer:
           $ref: '#/components/schemas/Writer'
         ingredients:
