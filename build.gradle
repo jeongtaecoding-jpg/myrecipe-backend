@@ -35,6 +35,9 @@ dependencies {
 	testImplementation 'org.springframework.boot:spring-boot-starter-test'
 	// Boot 4에서 @WebMvcTest가 별도 모듈로 분리됨 (컨트롤러 슬라이스 테스트용)
 	testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
+	// 통합 테스트: 테스트할 때만 진짜 MySQL 컨테이너를 띄운다 (Testcontainers 2.x 이름, 버전은 Spring Boot가 관리)
+	testImplementation 'org.springframework.boot:spring-boot-testcontainers'
+	testImplementation 'org.testcontainers:testcontainers-mysql'
 	runtimeOnly 'com.mysql:mysql-connector-j'
 	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
