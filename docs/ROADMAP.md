@@ -47,10 +47,10 @@ Spring Initializr(https://start.spring.io) 설정:
   - [ ] 회원가입 테스트 — 단위 + `@WebMvcTest` + Testcontainers (아래 메모의 "결정 완료" 항목)
     - [x] 서비스 단위 테스트 `MemberServiceTest` 3개 (성공, 이메일·닉네임 중복) — 2026-11-09, 설명 확인 통과
     - [x] 컨트롤러 테스트 `MemberControllerTest` 4개 (201, 400, 409, 보안 적용 확인) — 2026-11-09, 설명 확인 통과
-    - [ ] Testcontainers 통합 테스트: `signup`의 실제 INSERT, UNIQUE 제약, `readOnly`에서 저장되지 않는지 실험 (**다음 할 일**)
+    - [x] Testcontainers 통합 테스트 `MemberSignupIntegrationTest` 3개 (실제 INSERT·암호화·가입 시각, UNIQUE 제약, `readOnly` 실험) — 2026-11-09. `readOnly` 실험 결과: MySQL 드라이버가 "Connection is read-only"로 거부해 저장되지 않음. `contextLoads`도 개발 DB 대신 테스트 컨테이너 사용
   - [ ] 로그인(Access Token 발급), JWT 발급·검증 클래스, JWT 필터, `GET /api/members/me`
 - [ ] JWT `type` 클레임(access/refresh) 확인, Refresh Token `jti` 클레임(같은 초 재발급 시 토큰 중복 방지), JWT 필터가 `/api/auth/**`는 건너뜀, `/error` 허용
-- [ ] Refresh Token + Redis: 재발급(로테이션), 로그아웃, 재사용 감지. 먼저 단순한 "조회 → 비교 → 교체" 방식으로 만든다. 같은 토큰으로 동시에 온 재발급 요청이 둘 다 성공할 수 있는 경쟁 상태는 **알고 있는 한계**로 아키텍처 문서에 남긴다(Lua 원자화는 MVP 이후)
+- [ ] Refresh Token + Redis: (시작할 때 `IntegrationTestSupport`에 Redis 컨테이너 추가) 재발급(로테이션), 로그아웃, 재사용 감지. 먼저 단순한 "조회 → 비교 → 교체" 방식으로 만든다. 같은 토큰으로 동시에 온 재발급 요청이 둘 다 성공할 수 있는 경쟁 상태는 **알고 있는 한계**로 아키텍처 문서에 남긴다(Lua 원자화는 MVP 이후)
 - [ ] 필터 단계 에러(401)도 API_SPEC 형식으로 응답 (`SecurityExceptionHandler` → `HandlerExceptionResolver` 위임, `AuthMember` principal)
 - [ ] `JwtConfig` record(secret 32바이트 이상 검증, `iss` 확인)
 - [ ] `RequestIdFilter`(MDC `requestId`, `X-Request-Id`), 로그 레벨(4xx warn/5xx error)
@@ -59,7 +59,7 @@ Spring Initializr(https://start.spring.io) 설정:
 - [ ] `ErrorCode`: `FORBIDDEN`, `NOT_FOUND`, `METHOD_NOT_ALLOWED`, `UNSUPPORTED_MEDIA_TYPE`, `SERVICE_UNAVAILABLE`, `IMAGE_ALREADY_USED` 추가 (API_SPEC 6장과 1:1)
 - [ ] `GlobalExceptionHandler`: `handleExceptionInternal` 재정의, `AuthenticationException`/`AccessDeniedException`/`ConstraintViolationException` 처리, unknown 필드 거부 설정
 - [ ] `Member`: UNIQUE에 이름(`uk_member_email`, `uk_member_nickname`), `MemberService.signup`은 `saveAndFlush` + 제약 이름으로 중복 변환
-- [ ] `build.gradle`: ~~`spring-boot-starter-webmvc-test`~~ ✅ 2026-11-09 (+ `spring-security-test` → `spring-boot-starter-security-test`), Testcontainers(BOM, mysql) — Boot 4 호환 이름은 공식 문서로 확인 후
+- [x] `build.gradle`: `spring-boot-starter-webmvc-test`, `spring-security-test` → `spring-boot-starter-security-test`, `spring-boot-testcontainers` + `testcontainers-mysql`(Testcontainers 2.x 이름) — 2026-11-09
 - [ ] `application.yaml`: Redis 타임아웃 2초. (`default_batch_fetch_size`는 2단계에서 N+1을 fetch join으로 먼저 해결한 뒤, `application-prod.yaml`은 6단계, 가상 스레드는 MVP 이후)
 - [ ] `docker-compose.yml`: Redis 볼륨·healthcheck. (AOF·`noeviction`은 8단계)
 - [ ] `ci.yml`: 테스트가 Testcontainers로 바뀌면 MySQL 서비스·`DB_*` 환경 변수 제거
