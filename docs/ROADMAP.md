@@ -44,7 +44,7 @@ Spring Initializr(https://start.spring.io) 설정:
   - [x] `SecurityConfig`: `PasswordEncoder`(BCrypt), stateless, 가입·`/api/auth/**`·`/error` 허용
   - [x] `MemberService.signup` (중복 확인 → 인코딩 → 저장)
   - [x] `MemberController` `POST /api/members/signup` → 201 (작성·`compileJava` 통과. 실행·테스트는 아직 안 함)
-  - [ ] 회원가입 테스트: 서비스 단위 테스트(성공, 이메일·닉네임 중복), 컨트롤러 테스트(검증 실패 400, 중복 409, 성공 201). `signup`의 INSERT는 아직 테스트로 확인하지 못했다 (**다음 할 일**, 컨트롤러 테스트 방식은 아래 메모의 결정 완료 항목 참고: 단위 + `@WebMvcTest` + Testcontainers)
+  - [ ] 회원가입 테스트: ~~서비스 단위 테스트(성공, 이메일·닉네임 중복)~~ ✅ 2026-11-09 `MemberServiceTest` 3개 통과·설명 확인 통과 / 남은 것: 컨트롤러 테스트(검증 실패 400, 중복 409, 성공 201). `signup`의 INSERT는 아직 테스트로 확인하지 못했다 (**다음 할 일**, 컨트롤러 테스트 방식은 아래 메모의 결정 완료 항목 참고: 단위 + `@WebMvcTest` + Testcontainers)
   - [ ] 로그인(Access Token 발급), JWT 발급·검증 클래스, JWT 필터, `GET /api/members/me`
 - [ ] JWT `type` 클레임(access/refresh) 확인, Refresh Token `jti` 클레임(같은 초 재발급 시 토큰 중복 방지), JWT 필터가 `/api/auth/**`는 건너뜀, `/error` 허용
 - [ ] Refresh Token + Redis: 재발급(로테이션), 로그아웃, 재사용 감지. 먼저 단순한 "조회 → 비교 → 교체" 방식으로 만든다. 같은 토큰으로 동시에 온 재발급 요청이 둘 다 성공할 수 있는 경쟁 상태는 **알고 있는 한계**로 아키텍처 문서에 남긴다(Lua 원자화는 MVP 이후)
