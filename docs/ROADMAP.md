@@ -62,7 +62,7 @@ Spring Initializr(https://start.spring.io) 설정:
 - [x] `build.gradle`: `spring-boot-starter-webmvc-test`, `spring-security-test` → `spring-boot-starter-security-test`, `spring-boot-testcontainers` + `testcontainers-mysql`(Testcontainers 2.x 이름) — 2026-11-09
 - [ ] `application.yaml`: Redis 타임아웃 2초. (`default_batch_fetch_size`는 2단계에서 N+1을 fetch join으로 먼저 해결한 뒤, `application-prod.yaml`은 6단계, 가상 스레드는 MVP 이후)
 - [ ] `docker-compose.yml`: Redis 볼륨·healthcheck. (AOF·`noeviction`은 8단계)
-- [ ] `ci.yml`: 테스트가 Testcontainers로 바뀌면 MySQL 서비스·`DB_*` 환경 변수 제거
+- [x] `ci.yml`: 테스트가 Testcontainers로 바뀌어 MySQL 서비스·`DB_*` 환경 변수 제거 — 2026-11-09
 - [ ] 2단계 전: Flyway 도입(`V1__init.sql`), `ddl-auto: validate`. 이후 기능은 feature 브랜치 → PR → CI 통과 → merge
 
 **1단계 메모 (2026-11-03 기준)**
