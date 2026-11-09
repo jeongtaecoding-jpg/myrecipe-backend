@@ -9,4 +9,5 @@
 | 2026-11-05 | `Member` / `MemberService.signup` | `exists` 확인을 통과해도 UNIQUE 위반이 나는 경우와 그때 일어나는 일 (3번) | 2026-11-08 ✅ 같은 이메일 동시 요청 둘 다 `exists`=없음 → 둘 다 save → 늦은 쪽 INSERT가 UNIQUE 위반 → `handleUnexpected` → 500 (409여야 함 → 1단계 `saveAndFlush` + 제약 이름 변환으로 고친다) |
 | 2026-11-05 | `MemberService` | 클래스는 `readOnly = true`, 쓰기 메서드만 `@Transactional` — 왜 이렇게 나눴고, `signup`에서 `@Transactional`을 빼먹으면 회원가입이 어떻게 되는가 (4번) | 2026-11-09 ✅ 조회는 데이터를 바꾸면 안 되고 signup만 써야 해서 나눴다. 빼먹으면 클래스의 `readOnly`가 signup에도 적용돼 저장이 안 된다 → 2026-11-09 통합 테스트 실험으로 확인: MySQL 드라이버가 "Connection is read-only. Queries leading to data modification are not allowed"로 거부 |
 | 2026-11-05 | `SecurityConfig` | `/error`를 왜 허용해야 하는가 (5번) | 2026-11-09 ✅ 우리 핸들러가 못 잡은 에러는 `/error`로 넘어가는데, 막혀 있으면 로그인 안 한 사용자는 진짜 에러 대신 401("로그인부터 해")을 본다 → 진짜 원인을 알 수 없어 문제를 고칠 수 없다 (지금 설정에선 403일 수 있음, 1단계 7번 항목) |
-| 2026-11-08 | HTTP 상태 코드 (`ErrorCode`) | 400·401·403·404·409·500은 각각 언제 쓰는가, 4xx와 5xx는 무엇이 다른가 | |
+| 2026-11-08 | HTTP 상태 코드 (`ErrorCode`) | 400·401·403·404·409·500은 각각 언제 쓰는가, 4xx와 5xx는 무엇이 다른가 | 2026-11-09 ✅ 401 로그인 필요 · 403 권한 부족 · 404 찾는 자료가 없음 · 500 내부 서버 오류 (4xx는 요청 쪽, 5xx는 서버 쪽) |
+| 2026-11-09 | `Member` UNIQUE 제약 / `MemberService.signup` | 앞에 `existsByEmail` 확인이 있는데 DB UNIQUE 제약을 따로 둔 이유는? 동시 가입에서 `exists`를 통과한 요청 B를 마지막에 막는 것은 무엇인가 | 2026-11-09 ✅ exists는 동시 요청을 막지 못해서, DB의 UNIQUE 제약을 마지막 방어선으로 둔다 |

@@ -58,7 +58,7 @@ Spring Initializr(https://start.spring.io) 설정:
 **문서 변경에 따른 코드 후속 작업 (2026-11-06, LMS 참고 반영)** — 아직 코드는 바뀌지 않았다.
 - [ ] `ErrorCode`: `FORBIDDEN`, `NOT_FOUND`, `METHOD_NOT_ALLOWED`, `UNSUPPORTED_MEDIA_TYPE`, `SERVICE_UNAVAILABLE`, `IMAGE_ALREADY_USED` 추가 (API_SPEC 6장과 1:1)
 - [ ] `GlobalExceptionHandler`: `handleExceptionInternal` 재정의, `AuthenticationException`/`AccessDeniedException`/`ConstraintViolationException` 처리, unknown 필드 거부 설정
-- [ ] `Member`: UNIQUE에 이름(`uk_member_email`, `uk_member_nickname`), `MemberService.signup`은 `saveAndFlush` + 제약 이름으로 중복 변환
+- [x] `Member`: UNIQUE에 이름(`uk_member_email`, `uk_member_nickname`), `MemberService.signup`은 `saveAndFlush` + 제약 이름으로 중복 변환 — 2026-11-09, 동시 가입 5건 통합 테스트로 확인
 - [x] `build.gradle`: `spring-boot-starter-webmvc-test`, `spring-security-test` → `spring-boot-starter-security-test`, `spring-boot-testcontainers` + `testcontainers-mysql`(Testcontainers 2.x 이름) — 2026-11-09
 - [ ] `application.yaml`: Redis 타임아웃 2초. (`default_batch_fetch_size`는 2단계에서 N+1을 fetch join으로 먼저 해결한 뒤, `application-prod.yaml`은 6단계, 가상 스레드는 MVP 이후)
 - [ ] `docker-compose.yml`: Redis 볼륨·healthcheck. (AOF·`noeviction`은 8단계)
@@ -68,7 +68,7 @@ Spring Initializr(https://start.spring.io) 설정:
 **1단계 메모 (2026-11-03 기준)**
 - 작업 방식: Claude가 코드를 쓰고 자세히 설명하며, 직접 쓰겠다고 한 부분만 힌트·리뷰로 돕는다(`CLAUDE.md`).
 - 정해 둔 것: 서비스 클래스는 `@Transactional(readOnly = true)`, 쓰기 메서드만 `@Transactional`. 요청 DTO 이름은 `API_SPEC`·`openapi.yaml`을 따라 `SignupRequest`로 유지.
-- 알고 있는 한계: ① 동시 가입 시 `exists` 확인을 둘 다 통과하면 DB UNIQUE 위반(`DataIntegrityViolationException`)이 500으로 나간다. (결정: `saveAndFlush` + 제약 이름으로 `EMAIL_DUPLICATED`/`NICKNAME_DUPLICATED` 변환 — 아래 후속 작업) ② 인증 없는 요청은 지금 401이 아니라 403일 수 있다. 마지막 항목 "필터 단계 에러(401)"에서 `AuthenticationEntryPoint`로 맞춘다.
+- 알고 있는 한계: ① ~~동시 가입 시 `exists` 확인을 둘 다 통과하면 DB UNIQUE 위반(`DataIntegrityViolationException`)이 500으로 나간다.~~ (2026-11-09 해결: 409로 변환) (결정: `saveAndFlush` + 제약 이름으로 `EMAIL_DUPLICATED`/`NICKNAME_DUPLICATED` 변환 — 아래 후속 작업) ② 인증 없는 요청은 지금 401이 아니라 403일 수 있다. 마지막 항목 "필터 단계 에러(401)"에서 `AuthenticationEntryPoint`로 맞춘다.
 - **결정 완료 (2026-11-06): 컨트롤러 테스트 방식 = 서비스 단위 테스트 + B + Testcontainers 통합 테스트(C). 근거와 상세는 `CODE_CONVENTION.md` 테스트 절. (이전 비교 메모↓)** ~~결정 대기 (2026-11-05): 컨트롤러 테스트 방식.~~ A) standalone MockMvc + Mockito(빠름, 보안 설정 검증 불가) / B) `@WebMvcTest` + `SecurityConfig` import + 서비스 목(`permitAll` 같은 보안 회귀 검증, INSERT는 못 봄) / C) `@SpringBootTest` + MockMvc(실제 DB로 INSERT·UNIQUE·`createdAt` 확인, 느리고 개발 DB 오염 주의). 추천은 서비스 단위 테스트 + B + C 하나. 상세 비교는 `notes/Work Log_11_05.md`.
 - 테스트를 쓰기 전 확인할 것: ① B·C는 `build.gradle`에 `spring-boot-starter-webmvc-test` 같은 테스트 의존성이 필요할 수 있다(Boot 4 모듈 구성, 공식 문서로 확인 후 추가 여부를 사람이 결정). ② 테스트 전용 설정이 없어 로컬 테스트가 `.env`의 개발 DB를 쓴다. ③ CI에는 Redis 서비스와 `JWT_SECRET`이 없다. 지금은 아무 코드도 읽지 않아 통과하지만, JWT 클래스나 Redis 사용 코드가 들어가면 CI를 고쳐야 한다. ④ 테스트에 `@Transactional`을 붙이면 서비스의 `readOnly`가 무시되어 "읽기 전용에서 저장" 실험이 재현되지 않는다.
 - 이어서 할 때: `.env`가 있어야 테스트가 통과한다(`.env.example`을 복사). `docker compose up -d`로 MySQL·Redis를 먼저 띄우고 `./gradlew test`로 시작 상태를 확인한다.

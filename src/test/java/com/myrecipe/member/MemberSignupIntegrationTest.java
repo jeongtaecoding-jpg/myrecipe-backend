@@ -4,11 +4,21 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.catchThrowable;
 
+import com.myrecipe.global.exception.BusinessException;
+import com.myrecipe.global.exception.ErrorCode;
 import com.myrecipe.member.dto.SignupRequest;
 import com.myrecipe.member.entity.Member;
 import com.myrecipe.member.repository.MemberRepository;
 import com.myrecipe.member.service.MemberService;
 import com.myrecipe.support.IntegrationTestSupport;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -59,7 +69,7 @@ class MemberSignupIntegrationTest extends IntegrationTestSupport {
         // when & then: 동시 가입에서 늦게 INSERT한 요청과 같은 상황(서비스의 exists 확인을 거치지 않고 바로 저장)
         Member sameEmail = Member.create("tofu@test.com", "encoded", "다른닉네임");
         assertThatThrownBy(() -> memberRepository.saveAndFlush(sameEmail))
-                .isInstanceOf(DataIntegrityViolationException.class);   // 지금은 이 예외가 500으로 나간다(1단계 5번 항목에서 409로 바꾼다)
+                .isInstanceOf(DataIntegrityViolationException.class);   // 이 예외를 MemberService가 제약 이름으로 409로 바꾼다(아래 동시 가입 테스트)
     }
 
     @Test
@@ -77,5 +87,44 @@ class MemberSignupIntegrationTest extends IntegrationTestSupport {
         assertThat(memberRepository.existsByEmail("readonly@test.com"))
                 .as("읽기 전용 트랜잭션에서의 저장 결과 (발생한 예외: %s)", thrown)
                 .isFalse();
+    }
+
+    @Test
+    void 같은_이메일로_동시에_가입하면_한_명만_성공하고_나머지는_모두_EMAIL_DUPLICATED를_받는다() throws Exception {
+        // given: 같은 이메일, 서로 다른 닉네임으로 5개의 가입 요청을 동시에 출발시킨다
+        int requestCount = 5;
+        ExecutorService pool = Executors.newFixedThreadPool(requestCount);
+        CountDownLatch startSignal = new CountDownLatch(1);
+        List<Future<Member>> results = new ArrayList<>();
+        for (int i = 0; i < requestCount; i++) {
+            SignupRequest request = new SignupRequest("race@test.com", "password123", "동시가입" + i);
+            results.add(pool.submit(() -> {
+                startSignal.await();   // 모든 스레드가 준비되면 한꺼번에 출발
+                return memberService.signup(request);
+            }));
+        }
+
+        // when
+        startSignal.countDown();
+        int successCount = 0;
+        List<Throwable> failures = new ArrayList<>();
+        for (Future<Member> result : results) {
+            try {
+                result.get(30, TimeUnit.SECONDS);
+                successCount++;
+            } catch (ExecutionException e) {
+                failures.add(e.getCause());
+            }
+        }
+        pool.shutdown();
+
+        // then: exists 확인에서 막혔든, DB UNIQUE에서 막혔든 사용자는 모두 409 EMAIL_DUPLICATED를 받아야 한다(500 금지)
+        assertThat(successCount).isEqualTo(1);
+        assertThat(failures).hasSize(requestCount - 1)
+                .allSatisfy(failure -> assertThat(failure)
+                        .isInstanceOf(BusinessException.class)
+                        .extracting("errorCode")
+                        .isEqualTo(ErrorCode.EMAIL_DUPLICATED));
+        assertThat(memberRepository.count()).isEqualTo(1);
     }
 }

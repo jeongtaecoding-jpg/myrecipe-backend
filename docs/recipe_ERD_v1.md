@@ -184,7 +184,7 @@ Refresh Token과 로그인 실패 횟수는 MySQL이 아니라 Redis에 저장�
 ## 인덱스·제약 이름 규칙 (2026-11-06 추가)
 
 - 목록은 `ORDER BY created_at DESC, id DESC`로 정렬하므로 `recipe(created_at)`에 INDEX를 둔다.
-- UNIQUE·INDEX에는 이름을 붙인다: `uk_member_email`, `uk_member_nickname`, `uk_ingredient_name`, `uk_recipe_ingredient`, `uk_recipe_like`, `uk_recipe_thumbnail_key`, `uk_recipe_step_image_key`, `idx_recipe_created_at`, `idx_comment_recipe_created`. 동시 요청으로 UNIQUE 위반이 났을 때 **어느 제약인지 이름으로 구분**해 `EMAIL_DUPLICATED`/`NICKNAME_DUPLICATED`/`LIKE_ALREADY_EXISTS`로 바꾸기 위해서다. (MySQL이 알려 주는 제약 이름 형식은 통합 테스트로 확인한다)
+- UNIQUE·INDEX에는 이름을 붙인다: `uk_member_email`, `uk_member_nickname`, `uk_ingredient_name`, `uk_recipe_ingredient`, `uk_recipe_like`, `uk_recipe_thumbnail_key`, `uk_recipe_step_image_key`, `idx_recipe_created_at`, `idx_comment_recipe_created`. 동시 요청으로 UNIQUE 위반이 났을 때 **어느 제약인지 이름으로 구분**해 `EMAIL_DUPLICATED`/`NICKNAME_DUPLICATED`/`LIKE_ALREADY_EXISTS`로 바꾸기 위해서다. (MySQL이 알려 주는 제약 이름 형식은 통합 테스트로 확인한다 → 2026-11-09 확인: MySQL 8.4는 `for key 'member.uk_member_email'`처럼 **테이블 이름을 앞에 붙인다**. 그래서 이름 비교는 `uk_...` 그대로와 `테이블.uk_...` 둘 다 받는다)
 - 스키마는 2단계 시작 전에 Flyway로 관리한다(`V1__init.sql`을 이 ERD로 작성, `ddl-auto: validate`). 그 전까지의 `update`는 학습용 임시 설정이다.
 
 ## 문자셋·정렬 규칙과 저장 규칙 (2026-11-06 추가)
