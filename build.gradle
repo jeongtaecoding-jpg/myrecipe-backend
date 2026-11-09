@@ -29,9 +29,12 @@ dependencies {
 	implementation 'io.jsonwebtoken:jjwt-api:0.13.0'
 	runtimeOnly 'io.jsonwebtoken:jjwt-impl:0.13.0'
 	runtimeOnly 'io.jsonwebtoken:jjwt-jackson:0.13.0'
-	testImplementation 'org.springframework.security:spring-security-test'
+	// Boot 4: spring-security-test를 포함하고, @WebMvcTest 같은 테스트 슬라이스에서 보안 설정이 적용되게 하는 테스트 스타터
+	testImplementation 'org.springframework.boot:spring-boot-starter-security-test'
 	developmentOnly 'org.springframework.boot:spring-boot-devtools'
 	testImplementation 'org.springframework.boot:spring-boot-starter-test'
+	// Boot 4에서 @WebMvcTest가 별도 모듈로 분리됨 (컨트롤러 슬라이스 테스트용)
+	testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
 	runtimeOnly 'com.mysql:mysql-connector-j'
 	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
