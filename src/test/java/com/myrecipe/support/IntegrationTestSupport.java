@@ -8,7 +8,8 @@ import org.testcontainers.mysql.MySQLContainer;
 // 테스트할 때만 진짜 MySQL 8.4 컨테이너를 띄우고, 개발용 DB(.env·docker compose)는 쓰지 않는다.
 // 컨테이너는 static으로 한 번만 띄워서 모든 통합 테스트 클래스가 함께 쓴다(클래스마다 새로 띄우면 느리다).
 // Redis 컨테이너는 Redis를 쓰는 코드(Refresh Token)가 들어올 때 여기에 추가한다.
-@SpringBootTest
+// JWT 비밀 키는 .env 대신 테스트가 직접 넣는다(CI에는 .env가 없다).
+@SpringBootTest(properties = "jwt.secret=integration-test-secret-key-0123456789")
 public abstract class IntegrationTestSupport {
 
     @ServiceConnection   // 컨테이너의 주소·계정을 스프링 DB 설정으로 자동 연결

@@ -49,10 +49,13 @@ Spring Initializr(https://start.spring.io) 설정:
     - [x] 컨트롤러 테스트 `MemberControllerTest` 4개 (201, 400, 409, 보안 적용 확인) — 2026-11-09, 설명 확인 통과
     - [x] Testcontainers 통합 테스트 `MemberSignupIntegrationTest` 3개 (실제 INSERT·암호화·가입 시각, UNIQUE 제약, `readOnly` 실험) — 2026-11-09. `readOnly` 실험 결과: MySQL 드라이버가 "Connection is read-only"로 거부해 저장되지 않음. `contextLoads`도 개발 DB 대신 테스트 컨테이너 사용
   - [ ] 로그인(Access Token 발급), JWT 발급·검증 클래스, JWT 필터, `GET /api/members/me`
+    - [x] JWT 발급·검증 클래스 `JwtProvider`(Access Token, `type`·`iss`·HS256 확인, 만료 `TOKEN_EXPIRED`·그 밖 `TOKEN_INVALID`) — 2026-11-17, `JwtProviderTest` 6개, 설명 확인 통과
+    - [ ] 로그인 API `POST /api/auth/login` (Access Token 발급)
+    - [ ] JWT 필터 + `GET /api/members/me`
 - [ ] JWT `type` 클레임(access/refresh) 확인, Refresh Token `jti` 클레임(같은 초 재발급 시 토큰 중복 방지), JWT 필터가 `/api/auth/**`는 건너뜀, `/error` 허용
 - [ ] Refresh Token + Redis: (시작할 때 `IntegrationTestSupport`에 Redis 컨테이너 추가) 재발급(로테이션), 로그아웃, 재사용 감지. 먼저 단순한 "조회 → 비교 → 교체" 방식으로 만든다. 같은 토큰으로 동시에 온 재발급 요청이 둘 다 성공할 수 있는 경쟁 상태는 **알고 있는 한계**로 아키텍처 문서에 남긴다(Lua 원자화는 MVP 이후)
 - [ ] 필터 단계 에러(401)도 API_SPEC 형식으로 응답 (`SecurityExceptionHandler` → `HandlerExceptionResolver` 위임, `AuthMember` principal)
-- [ ] `JwtConfig` record(secret 32바이트 이상 검증, `iss` 확인)
+- [x] `JwtConfig` record(secret 32바이트 이상 검증, `iss` 확인) — 2026-11-17, `JwtConfigTest` 3개. 통합 테스트는 `IntegrationTestSupport`에서 테스트용 시크릿을 넣는다
 - [ ] `RequestIdFilter`(MDC `requestId`, `X-Request-Id`), 로그 레벨(4xx warn/5xx error)
 
 **문서 변경에 따른 코드 후속 작업 (2026-11-06, LMS 참고 반영)** — 아직 코드는 바뀌지 않았다.
