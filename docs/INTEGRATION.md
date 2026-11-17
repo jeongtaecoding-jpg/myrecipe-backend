@@ -338,6 +338,7 @@ Spring의 `ResponseCookie`로 만든다.
 - 라이브러리는 jjwt 0.13.0(`jjwt-api` + 런타임 `jjwt-impl`, `jjwt-jackson`)을 쓴다.
 - **Refresh Token에는 `jti`(랜덤 UUID) 클레임을 넣는다.** JWT는 내용이 같으면 서명도 같고 `iat`는 초 단위라서, 같은 회원에게 같은 초 안에 두 번 발급하면 똑같은 토큰이 나온다. 그러면 "이미 교체된 예전 토큰의 재사용"을 해시 비교로 감지할 수 없다. 발급마다 다른 `jti`를 넣어 항상 다른 토큰이 되게 한다.
 - 서명 알고리즘은 HS256으로 고정하고, 토큰 헤더의 `alg` 값을 믿지 않는다. `JWT_SECRET`은 32바이트(256비트) 이상이어야 하며, 짧으면 앱이 시작되지 않게 한다.
+- 발급자(`iss`)는 `myrecipe`로 고정하고 검증할 때 확인한다(2026-11-17). Access Token 내용: `sub`=회원 id, `type`=`access`, `iss`, `iat`, `exp`. 구현: `global/security/JwtProvider`, 설정: `JwtConfig`.
 - `Authorization` 헤더가 없으면 그냥 통과시킨다. 인증이 필요한 API라면 뒤에서 401이 난다.
 - 헤더가 있으면 검증한다. 성공하면 로그인 사용자를 SecurityContext에 넣고, 실패하면(만료·위조) 허용된 API여도 401(`TOKEN_EXPIRED`, `TOKEN_INVALID`)로 응답한다. 프론트는 `TOKEN_EXPIRED`면 재발급하고, `TOKEN_INVALID`면 로그아웃 상태로 만든다.
 
